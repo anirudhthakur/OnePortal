@@ -1,0 +1,35 @@
+# Maven
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+*.class
+
+# Spring Boot
+*.jar
+*.war
+*.ear
+application-secrets.properties
+application-local.properties
+*.env
+.env.*
+
+# IDE
+.idea/
+*.iml
+*.iws
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Frontend (also covered by frontend/.gitignore)
+frontend/node_modules/
+frontend/dist/
+frontend/dist-sr/

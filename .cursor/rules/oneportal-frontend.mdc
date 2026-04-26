@@ -1,0 +1,82 @@
+---
+description: OnePortal frontend coding conventions for React/TypeScript
+globs: frontend/src/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# OnePortal Frontend Rules
+
+## File Locations
+
+| Concern | Location |
+|---------|----------|
+| API functions | `src/api/<domain>Api.ts` |
+| Types / interfaces | `src/types/<domain>.ts` |
+| Pages | `src/pages/<Name>Page.tsx` |
+| Routes | `src/App.tsx` inside `<ProtectedRoute>` / `<AppLayout>` |
+
+## Data Fetching
+
+```ts
+// TanStack Query v5 — always wrap queryFn in arrow function
+const { data } = useQuery({
+  queryKey: ['sheet', projectId],
+  queryFn: () => getSheetByProject(projectId!),
+  enabled: !!projectId,
+  retry: false,          // use retry:false for queries expected to 404
+});
+
+// Mutations
+const mut = useMutation({
+  mutationFn: updateRow,
+  onSuccess: () => queryClient.invalidateQueries({ queryKey: ['sheet', projectId] }),
+  onError: (err: Error) => alert(err.message),
+});
+```
+
+- Always invalidate queries after mutations to keep the UI in sync
+
+## Role Checks
+
+```ts
+const myMembership = project?.members.find(m => m.userId === currentUser?.id);
+const isOwner = myMembership?.role === 'OWNER';
+const isTesterOrOwner = isOwner || myMembership?.role === 'TESTER';
+const isAdmin = currentUser?.role === 'ADMIN';
+```
+
+## Styling
+
+- Tailwind CSS only — no CSS files, no inline `style={}` (exception: dynamic chart fill colours)
+- Brand colour: indigo (`indigo-600` primary, `indigo-100` light background)
+- Card pattern: `bg-white rounded-xl border border-gray-200 shadow-sm p-4`
+- Primary button: `bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg`
+- Danger button: `bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg`
+- Warning/replace button: `bg-amber-50 text-amber-700 border border-amber-300 hover:bg-amber-100`
+- Loading spinner: `animate-spin` SVG circle/path pattern
+
+## Charts (Recharts)
+
+- `PieChart` for status distributions; `BarChart` (stacked) for assignment overviews
+- Always wrap in `<ResponsiveContainer width="100%" height={260}>`
+- Write custom tooltip components above the page function, not as inline lambdas
+- Use a `STATUS_CHART_COLORS` record (`Record<RowStatus | 'null', string>`) — never hardcode hex colours inline:
+  `NOT_STARTED`→`#94a3b8`, `IN_PROGRESS`→`#3b82f6`, `PASSED`→`#22c55e`, `FAILED`→`#ef4444`, `BLOCKED`→`#f97316`
+
+## Pagination
+
+- Use `getPaginationRange(current, total)` helper (see `ProjectTestCasesPage.tsx`)
+- Offer page-size selector: options `[10, 25, 50, 100]`
+
+## Confirmation Modals
+
+- Use inline overlay pattern — no separate modal component
+- State: `const [deleteConfirmItem, setDeleteConfirmItem] = useState<T | null>(null)`
+- Show only when `deleteConfirmItem !== null`
+
+## Icons
+
+Lucide React only:
+```ts
+import { Trash2, Plus, Upload, Download, ChevronLeft } from 'lucide-react';
+```

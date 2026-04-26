@@ -1,0 +1,36 @@
+---
+description: OnePortal project context, architecture rules, and feature checklist — always applied
+alwaysApply: true
+---
+
+# OnePortal — Project Context
+
+Always read `cursor/instructions.md` for the full current-state and roadmap before making changes.
+
+## Project Identity
+
+- **Backend:** Spring Boot 3.2, Java 17, Maven, JPA, H2 (dev) / PostgreSQL (prod), Apache POI, Lombok
+- **Frontend:** React 19, TypeScript, Vite 8, Tailwind CSS 4, TanStack Query v5, Recharts, xlsx, Lucide React
+
+## Critical: Main UI Flow
+
+The project's test-case UI uses **`TestDesignRow`** (Excel rows via `/api/v1/excel/...`) — NOT the `TestCase` / `TestExecution` JPA entities.
+Do NOT call `/api/v1/test-cases` or `/api/v1/test-executions` in the main project workflow.
+
+## What NOT to Do
+
+- Never expose JPA entities directly from controllers — always use DTOs
+- Never add CSS files — Tailwind only
+- Never add chart libraries other than Recharts
+- Never add icon libraries other than Lucide React
+- Never use `&&` as a command separator in PowerShell — use `;` or separate calls
+- Never change `SecurityConfig` permit-all setup without a JWT plan (Phase 2)
+- Never use `useEffect` for data that can be derived with `useMemo`
+
+## Starting a New Feature
+
+1. Read `cursor/instructions.md` — verify alignment with current architecture
+2. Backend: Entity → Flyway migration → Repository → Service (role checks) → Controller → DTO
+3. Frontend: Type in `src/types/` → API fn in `src/api/` → Page in `src/pages/` → Route in `App.tsx`
+4. Dev start: `mvn spring-boot:run "-Dspring-boot.run.profiles=dev"` + `npm run dev` (from `frontend/`)
+5. Update `cursor/instructions.md` — move feature from roadmap to built features

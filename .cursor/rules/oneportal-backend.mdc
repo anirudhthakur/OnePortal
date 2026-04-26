@@ -1,0 +1,68 @@
+---
+description: OnePortal backend coding conventions for Java/Spring Boot
+globs: src/main/java/**/*.java
+alwaysApply: false
+---
+
+# OnePortal Backend Rules
+
+## Package Structure
+
+```
+controller/   ← REST endpoints only (no business logic)
+service/      ← all business logic + permission checks
+repository/   ← JPA only, no custom SQL in controllers
+dto/          ← nested static classes inside one outer DTO class per domain
+entity/       ← @Entity, never returned from controllers
+exception/    ← ResourceNotFoundException, AccessDeniedException
+```
+
+## Entity Pattern
+
+```java
+@Entity @Table(name = "...")
+@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
+public class Foo {
+    @Id @GeneratedValue(strategy = GenerationType.IDENTITY) private Long id;
+    @CreatedDate @Column(updatable = false) private LocalDateTime createdAt;
+    @LastModifiedDate private LocalDateTime updatedAt;
+}
+```
+
+- Use `@ManyToOne(fetch = FetchType.LAZY)` for all associations — never `EAGER`
+- Use `@Builder.Default` when initialising collections in Lombok builders
+- Define enums as inner classes of the entity they belong to
+
+## DTO Pattern — Nested Static Classes
+
+```java
+public class FooDTO {
+    @Value @Builder public static class FooResponse { ... }   // immutable response
+    @Data public static class CreateFooRequest { ... }        // Jackson-deserialised request
+}
+```
+
+- Never expose JPA entities from controllers — always map to DTO
+
+## Service Pattern
+
+- Class-level `@Transactional(readOnly = true)`, override with `@Transactional` on writes
+- Always verify requester role before mutating: check both `User.Role` (global) and `ProjectMember.ProjectRole` (project-level)
+- Throw `ResourceNotFoundException` (triggers 404), `AccessDeniedException` (triggers 403)
+- When deleting parent entity, manually delete children lacking cascade (rows → sheet → project)
+
+## Controller Pattern
+
+```java
+@RestController @RequestMapping("/api/v1/...")
+@RequiredArgsConstructor @Tag(name = "...")
+```
+
+- Use `@RequestParam Long requesterId` — no Spring Security principal yet (Phase 2)
+- Use `@Operation(summary = "...")` on every endpoint
+- Return DTOs, never entities
+
+## Flyway
+
+- New migration: `src/main/resources/db/migration/V<next>__description.sql`
+- Never edit an existing migration file
