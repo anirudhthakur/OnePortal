@@ -277,7 +277,11 @@ public class ExcelImportService {
                         .rowId(dbRow.getId())
                         .rowIndex(dbRow.getRowIndex())
                         .assignedToId(dbRow.getAssignedTo() != null ? dbRow.getAssignedTo().getId() : null)
-                        .assignedToUsername(dbRow.getAssignedTo() != null ? dbRow.getAssignedTo().getUsername() : null)
+                        .assignedToUsername(dbRow.getAssignedTo() != null
+                                ? (dbRow.getAssignedTo().isDeleted()
+                                        ? dbRow.getAssignedTo().getUsername() + " (INACTIVE)"
+                                        : dbRow.getAssignedTo().getUsername())
+                                : null)
                         .rowStatus(dbRow.getRowStatus())
                         .data(map)
                         .linkedDefectIds(new HashSet<>(dbRow.getLinkedDefectIds()))
@@ -359,7 +363,11 @@ public class ExcelImportService {
                     .rowId(row.getId())
                     .rowIndex(row.getRowIndex())
                     .assignedToId(row.getAssignedTo() != null ? row.getAssignedTo().getId() : null)
-                    .assignedToUsername(row.getAssignedTo() != null ? row.getAssignedTo().getUsername() : null)
+                    .assignedToUsername(row.getAssignedTo() != null
+                            ? (row.getAssignedTo().isDeleted()
+                                    ? row.getAssignedTo().getUsername() + " (INACTIVE)"
+                                    : row.getAssignedTo().getUsername())
+                            : null)
                     .rowStatus(row.getRowStatus())
                     .data(map)
                     .linkedDefectIds(new HashSet<>(row.getLinkedDefectIds()))

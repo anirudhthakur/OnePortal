@@ -21,9 +21,11 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     boolean existsByEmail(String email);
 
-    Page<User> findByEnabled(boolean enabled, Pageable pageable);
+    Page<User> findByEnabledAndDeletedFalse(boolean enabled, Pageable pageable);
 
-    List<User> findByEnabledFalse();
+    Page<User> findByDeletedTrue(Pageable pageable);
+
+    List<User> findByDeletedTrue();
 
     boolean existsByRoleAndEnabledTrue(Role role);
 }

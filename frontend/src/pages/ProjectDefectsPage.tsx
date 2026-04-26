@@ -5,7 +5,7 @@ import {
   ChevronRight, Search, ArrowUpDown, ArrowUp, ArrowDown,
   ChevronLeft, ChevronRight as ChevronRightIcon,
   Bug, AlertCircle, Download, Plus, Trash2, CheckCircle,
-  X, ChevronDown, Filter, Maximize2, Clock,
+  X, ChevronDown, Filter, Maximize2, Clock, FlaskConical,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import {
@@ -14,6 +14,7 @@ import {
 } from '../api/defectApi';
 import { getDefectDropdown } from '../api/defectApi';
 import { getProject, getProjectMembers } from '../api/projectApi';
+import { getSheetByProject } from '../api/excelApi';
 import { useCurrentUser } from '../context/UserContext';
 import type { ProjectMember, ProjectRole } from '../types/project';
 import type { DefectRowResponse } from '../types/defect';
@@ -68,6 +69,26 @@ export default function ProjectDefectsPage() {
   // Detail panel
   const [expandedRow, setExpandedRow] = useState<DefectRowResponse | null>(null);
 
+  // Column resize state
+  const [colWidths, setColWidths] = useState<Record<string, number>>({});
+  const resizeRef = useRef<{ col: string; startX: number; startWidth: number } | null>(null);
+
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!resizeRef.current) return;
+      const { col, startX, startWidth } = resizeRef.current;
+      const newWidth = Math.max(60, startWidth + (e.clientX - startX));
+      setColWidths(prev => ({ ...prev, [col]: newWidth }));
+    };
+    const onMouseUp = () => { resizeRef.current = null; };
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, []);
+
   const { data: project } = useQuery({
     queryKey: ['project', id],
     queryFn: () => getProject(id),
@@ -99,18 +120,29 @@ export default function ProjectDefectsPage() {
     enabled: !!id,
   });
 
+  // Fetch test design rows to compute real linked-test counts
+  const { data: testSheet } = useQuery({
+    queryKey: ['projectSheet', id],
+    queryFn: () => getSheetByProject(id),
+    enabled: !!id,
+    retry: false,
+  });
+
   const myMembership = members.find((m: ProjectMember) => m.userId === currentUser?.id);
   const myRole: ProjectRole | null = myMembership?.role ?? null;
   const isTesterOrOwner = myRole === 'OWNER' || myRole === 'TESTER';
 
-  // Compute linked test counts: defectRowId -> count of test rows that reference it
-  const linkedTestCounts = useMemo(() => {
-    if (!defectDropdown.length) return {} as Record<number, number>;
-    // defectDropdown just has rowId. We need to count from test cases sheet if available.
-    // We'll compute this lazily - just show counts from defectDropdown (each item means it's linkable)
-    // Actual linked test count would require the test sheet data. We do have it if we load it.
-    return {} as Record<number, number>;
-  }, [defectDropdown]);
+  // Build a map: defectRowId -> number of test rows that reference it
+  const linkedTestCounts = useMemo<Record<number, number>>(() => {
+    if (!testSheet?.rows) return {};
+    const counts: Record<number, number> = {};
+    for (const row of testSheet.rows) {
+      for (const defectRowId of row.linkedDefectIds ?? []) {
+        counts[defectRowId] = (counts[defectRowId] ?? 0) + 1;
+      }
+    }
+    return counts;
+  }, [testSheet]);
 
   const isLoading = loadingSummary || loadingRows;
 
@@ -373,17 +405,31 @@ export default function ProjectDefectsPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
+          <table className="min-w-full text-sm table-fixed">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
                 <th className="sticky left-0 z-10 bg-gray-50 px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-10">#</th>
                 {(defectPage?.columns ?? []).map((col: string) => (
                   <th
                     key={col}
-                    className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap cursor-pointer hover:bg-gray-100 transition-colors select-none"
+                    style={{ width: colWidths[col], minWidth: colWidths[col] ?? 80 }}
+                    className="relative px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-100 transition-colors select-none"
                     onClick={() => handleSort(col)}
                   >
-                    <div className="flex items-center gap-1">{col}<SortIcon col={col} /></div>
+                    <div className="flex items-center gap-1 pr-2">{col}<SortIcon col={col} /></div>
+                    <div
+                      className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-rose-400 transition-colors z-20"
+                      onMouseDown={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        const th = e.currentTarget.closest('th') as HTMLElement;
+                        resizeRef.current = {
+                          col,
+                          startX: e.clientX,
+                          startWidth: colWidths[col] ?? th.getBoundingClientRect().width,
+                        };
+                      }}
+                    />
                   </th>
                 ))}
                 <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap bg-rose-50 min-w-24">
@@ -397,7 +443,7 @@ export default function ProjectDefectsPage() {
               <tr className="bg-white border-b border-gray-100">
                 <th className="sticky left-0 z-10 bg-white px-2 py-1" />
                 {(defectPage?.columns ?? []).map((col: string) => (
-                  <th key={col} className="px-2 py-1">
+                  <th key={col} style={{ width: colWidths[col], minWidth: colWidths[col] ?? 80 }} className="px-2 py-1">
                     <input
                       type="text"
                       placeholder={`Filter…`}
@@ -426,7 +472,6 @@ export default function ProjectDefectsPage() {
                   const isSaving = savingRows.has(row.rowId);
                   const rowCellEdits = pendingCells[row.rowId] ?? {};
                   const hasPendingChanges = Object.keys(rowCellEdits).length > 0;
-                  const linkedCount = defectDropdown.filter((d: DropdownItem) => d.rowId === row.rowId).length;
 
                   return (
                     <tr
@@ -467,7 +512,7 @@ export default function ProjectDefectsPage() {
                       {(defectPage?.columns ?? []).map((col: string) => {
                         const currentVal = rowCellEdits[col] !== undefined ? rowCellEdits[col] : (row.data[col] ?? '');
                         return (
-                          <td key={col} className="px-2 py-1.5 text-gray-700 whitespace-nowrap max-w-xs">
+                          <td key={col} style={{ width: colWidths[col], maxWidth: colWidths[col] ?? undefined }} className="px-2 py-1.5 text-gray-700 overflow-hidden">
                             {isTesterOrOwner ? (
                               <div className="flex items-center gap-1">
                                 <input
@@ -481,7 +526,7 @@ export default function ProjectDefectsPage() {
                                     }));
                                   }}
                                   disabled={isSaving}
-                                  className="w-full min-w-24 max-w-xs border-0 border-b border-transparent hover:border-gray-300 focus:border-rose-400 focus:outline-none bg-transparent text-sm py-0.5 transition-colors"
+                                  className="w-full min-w-0 border-0 border-b border-transparent hover:border-gray-300 focus:border-rose-400 focus:outline-none bg-transparent text-sm py-0.5 transition-colors"
                                 />
                                 {hasPendingChanges && col === defectPage?.columns[defectPage.columns.length - 1] && (
                                   <button
@@ -497,7 +542,7 @@ export default function ProjectDefectsPage() {
                                 )}
                               </div>
                             ) : (
-                              <span className="text-sm truncate block max-w-xs" title={row.data[col]}>{row.data[col] ?? ''}</span>
+                              <span className="text-sm truncate block" title={row.data[col]}>{row.data[col] ?? ''}</span>
                             )}
                           </td>
                         );
@@ -511,13 +556,15 @@ export default function ProjectDefectsPage() {
                       {/* Linked Tests */}
                       <td className="px-3 py-2 bg-inherit min-w-24">
                         {(() => {
-                          // Count how many test-case rows reference this defect row
-                          // We use defectDropdown which has all defect rows - check if rowId matches
-                          const isLinked = defectDropdown.some((d: DropdownItem) => d.rowId === row.rowId);
-                          return isLinked ? (
-                            <span className="inline-flex items-center gap-1 text-xs font-medium bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full">
-                              <Bug className="w-3 h-3" /> Linked
-                            </span>
+                          const count = linkedTestCounts[row.rowId] ?? 0;
+                          return count > 0 ? (
+                            <Link
+                              to={`/projects/${id}/test-cases?defectRowId=${row.rowId}`}
+                              className="inline-flex items-center gap-1 text-xs font-medium bg-indigo-100 text-indigo-700 hover:bg-indigo-200 px-2 py-0.5 rounded-full transition-colors"
+                              title={`${count} test case${count !== 1 ? 's' : ''} linked to this defect`}
+                            >
+                              <FlaskConical className="w-3 h-3" /> {count} test{count !== 1 ? 's' : ''}
+                            </Link>
                           ) : (
                             <span className="text-xs text-gray-400">—</span>
                           );

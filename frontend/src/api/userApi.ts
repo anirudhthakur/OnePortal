@@ -12,6 +12,7 @@ export interface User {
   email: string;
   role: UserRole;
   enabled: boolean;
+  deleted: boolean;
   createdAt: string;
 }
 
@@ -42,4 +43,9 @@ export const createUser = async (request: CreateUserRequest): Promise<User> => {
 
 export const deleteUser = async (id: number): Promise<void> => {
   await api.delete(`/api/v1/users/${id}`);
+};
+
+export const getInactiveUsers = async (size = 100): Promise<User[]> => {
+  const { data } = await api.get<PageResponse<User>>('/api/v1/users/inactive', { params: { size } });
+  return data.content;
 };

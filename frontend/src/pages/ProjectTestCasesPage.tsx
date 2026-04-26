@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ChevronRight, Search, ArrowUpDown, ArrowUp, ArrowDown,
@@ -69,6 +69,7 @@ export default function ProjectTestCasesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { currentUser } = useCurrentUser();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
@@ -80,6 +81,14 @@ export default function ProjectTestCasesPage() {
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
   const [statusFilter, setStatusFilter] = useState<RowStatus | ''>('');
   const [assigneeFilter, setAssigneeFilter] = useState<string>('');
+
+  // Linked-defect filter — initialised from URL param ?defectRowId=
+  const [linkedDefectFilter, setLinkedDefectFilter] = useState<number | null>(
+    () => {
+      const v = searchParams.get('defectRowId');
+      return v ? Number(v) : null;
+    }
+  );
 
   // Inline editing state
   const [pendingAssign, setPendingAssign] = useState<Record<number, string>>({});
@@ -118,6 +127,26 @@ export default function ProjectTestCasesPage() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // Column resize state
+  const [colWidths, setColWidths] = useState<Record<string, number>>({});
+  const resizeRef = useRef<{ col: string; startX: number; startWidth: number } | null>(null);
+
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!resizeRef.current) return;
+      const { col, startX, startWidth } = resizeRef.current;
+      const newWidth = Math.max(60, startWidth + (e.clientX - startX));
+      setColWidths(prev => ({ ...prev, [col]: newWidth }));
+    };
+    const onMouseUp = () => { resizeRef.current = null; };
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, []);
 
   const { data: project } = useQuery({
     queryKey: ['project', id],
@@ -161,8 +190,9 @@ export default function ProjectTestCasesPage() {
       Object.values(columnFilters).filter(v => v.trim() !== '').length +
       (search.trim() ? 1 : 0) +
       (statusFilter ? 1 : 0) +
-      (assigneeFilter ? 1 : 0),
-    [columnFilters, search, statusFilter, assigneeFilter]
+      (assigneeFilter ? 1 : 0) +
+      (linkedDefectFilter !== null ? 1 : 0),
+    [columnFilters, search, statusFilter, assigneeFilter, linkedDefectFilter]
   );
 
   const clearAllFilters = () => {
@@ -170,6 +200,8 @@ export default function ProjectTestCasesPage() {
     setColumnFilters({});
     setStatusFilter('');
     setAssigneeFilter('');
+    setLinkedDefectFilter(null);
+    setSearchParams({});
     setPage(0);
   };
 
@@ -197,6 +229,13 @@ export default function ProjectTestCasesPage() {
       );
     }
 
+    // Linked-defect filter — show only rows that reference the selected defect row ID
+    if (linkedDefectFilter !== null) {
+      rows = rows.filter((row: RowWithMeta) =>
+        (row.linkedDefectIds ?? []).includes(linkedDefectFilter)
+      );
+    }
+
     // Per data-column filters
     for (const [col, val] of Object.entries(columnFilters)) {
       if (!val.trim()) continue;
@@ -213,7 +252,7 @@ export default function ProjectTestCasesPage() {
       });
     }
     return rows;
-  }, [sheet, search, columnFilters, statusFilter, assigneeFilter, sortCol, sortDir]);
+  }, [sheet, search, columnFilters, statusFilter, assigneeFilter, linkedDefectFilter, sortCol, sortDir]);
 
   const totalPages = Math.ceil(filteredRows.length / pageSize);
   const clampedPage = Math.min(page, Math.max(0, totalPages - 1));
@@ -301,7 +340,7 @@ export default function ProjectTestCasesPage() {
         assignedToId: newAssigneeId,
         rowStatus: newStatus ?? undefined,
         rowData: mergedRowData,
-        linkedDefectIds: newLinkedDefects !== undefined ? new Set(newLinkedDefects) : undefined,
+        linkedDefectIds: newLinkedDefects !== undefined ? [...new Set(newLinkedDefects)] : undefined,
       });
       queryClient.invalidateQueries({ queryKey: ['projectSheet', id] });
       setPendingAssign(prev => { const n = { ...prev }; delete n[row.rowId]; return n; });
@@ -503,6 +542,28 @@ export default function ProjectTestCasesPage() {
               </button>
             )}
 
+            {/* Linked-defect filter chip */}
+            {linkedDefectFilter !== null && (() => {
+              const defect = defectDropdown.find((d: DropdownItem) => d.rowId === linkedDefectFilter);
+              return (
+                <span className="inline-flex items-center gap-1.5 text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200 px-2.5 py-1.5 rounded-lg">
+                  <Bug className="w-3 h-3" />
+                  Defect: {defect?.defectId ?? `#${linkedDefectFilter}`}
+                  <button
+                    onClick={() => {
+                      setLinkedDefectFilter(null);
+                      setSearchParams({});
+                      setPage(0);
+                    }}
+                    className="ml-0.5 hover:text-rose-900 transition-colors"
+                    title="Clear defect filter"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              );
+            })()}
+
             {/* Bulk status update — shown when rows are selected */}
             {selectedRowIds.size > 0 && isTesterOrOwner && (
               <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-1.5">
@@ -556,7 +617,7 @@ export default function ProjectTestCasesPage() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
+            <table className="min-w-full text-sm table-fixed">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200">
                   {/* Bulk select column */}
@@ -575,10 +636,24 @@ export default function ProjectTestCasesPage() {
                   {displayColumns.map((col: string) => (
                     <th
                       key={col}
-                      className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap cursor-pointer hover:bg-gray-100 transition-colors select-none"
+                      style={{ width: colWidths[col], minWidth: colWidths[col] ?? 80 }}
+                      className="relative px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-100 transition-colors select-none"
                       onClick={() => handleSort(col)}
                     >
-                      <div className="flex items-center gap-1">{col}<SortIcon col={col} /></div>
+                      <div className="flex items-center gap-1 pr-2">{col}<SortIcon col={col} /></div>
+                      <div
+                        className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-indigo-400 transition-colors z-20"
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          const th = e.currentTarget.closest('th') as HTMLElement;
+                          resizeRef.current = {
+                            col,
+                            startX: e.clientX,
+                            startWidth: colWidths[col] ?? th.getBoundingClientRect().width,
+                          };
+                        }}
+                      />
                     </th>
                   ))}
                   <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap bg-indigo-50 sticky right-24 z-10 min-w-36">
@@ -602,7 +677,7 @@ export default function ProjectTestCasesPage() {
                   {isTesterOrOwner && <th className="sticky left-0 z-10 bg-white px-2 py-1" />}
                   <th className="sticky left-0 z-10 bg-white px-2 py-1" />
                   {displayColumns.map((col: string) => (
-                    <th key={col} className="px-2 py-1">
+                    <th key={col} style={{ width: colWidths[col], minWidth: colWidths[col] ?? 80 }} className="px-2 py-1">
                       <input
                         type="text"
                         placeholder="Filter…"
@@ -727,7 +802,7 @@ export default function ProjectTestCasesPage() {
                         {displayColumns.map((col: string) => {
                           const currentVal = rowCellEdits[col] !== undefined ? rowCellEdits[col] : (row.data[col] ?? '');
                           return (
-                            <td key={col} className="px-2 py-1.5 text-gray-700 whitespace-nowrap max-w-xs">
+                            <td key={col} style={{ width: colWidths[col], maxWidth: colWidths[col] ?? undefined }} className="px-2 py-1.5 text-gray-700 overflow-hidden">
                               {isTesterOrOwner ? (
                                 <input
                                   type="text"
@@ -740,10 +815,10 @@ export default function ProjectTestCasesPage() {
                                     }));
                                   }}
                                   disabled={isSaving}
-                                  className="w-full min-w-24 max-w-xs border-0 border-b border-transparent hover:border-gray-300 focus:border-indigo-400 focus:outline-none bg-transparent text-sm py-0.5 transition-colors"
+                                  className="w-full min-w-0 border-0 border-b border-transparent hover:border-gray-300 focus:border-indigo-400 focus:outline-none bg-transparent text-sm py-0.5 transition-colors"
                                 />
                               ) : (
-                                <span className="text-sm truncate block max-w-xs" title={row.data[col]}>{row.data[col] ?? ''}</span>
+                                <span className="text-sm truncate block" title={row.data[col]}>{row.data[col] ?? ''}</span>
                               )}
                             </td>
                           );
@@ -759,6 +834,14 @@ export default function ProjectTestCasesPage() {
                               disabled={isSaving}
                             >
                               <option value="">Unassigned</option>
+                              {/* Phantom option for deactivated assignees no longer in the project */}
+                              {row.assignedToId &&
+                                !members.some((m: ProjectMember) => m.userId === row.assignedToId) &&
+                                row.assignedToUsername && (
+                                  <option value={row.assignedToId.toString()} disabled>
+                                    {row.assignedToUsername}
+                                  </option>
+                              )}
                               {members
                                 .filter((m: ProjectMember) => m.role === 'TESTER' || m.role === 'OWNER')
                                 .map((m: ProjectMember) => (

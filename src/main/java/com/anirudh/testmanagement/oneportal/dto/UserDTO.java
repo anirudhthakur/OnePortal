@@ -19,6 +19,7 @@ public class UserDTO {
         String email;
         Role role;
         boolean enabled;
+        boolean deleted;
         LocalDateTime createdAt;
         LocalDateTime updatedAt;
     }

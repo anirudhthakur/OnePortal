@@ -52,6 +52,10 @@ public class User {
     @Builder.Default
     private boolean enabled = true;
 
+    @Column(nullable = false)
+    @Builder.Default
+    private boolean deleted = false;
+
     @OneToMany(mappedBy = "createdBy", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<TestCase> testCases = new ArrayList<>();

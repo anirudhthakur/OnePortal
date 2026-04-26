@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  Users, Plus, Trash2, AlertCircle, X, Copy, CheckCircle, LogIn, Clock, ShieldCheck,
+  Users, Plus, Trash2, AlertCircle, X, Copy, CheckCircle, LogIn, Clock, ShieldCheck, UserX,
 } from 'lucide-react';
-import { getAllUsers, createUser, deleteUser } from '../api/userApi';
+import { getAllUsers, createUser, deleteUser, getInactiveUsers } from '../api/userApi';
 import type { User, UserRole } from '../api/userApi';
 import { getPendingUsers, approveUser } from '../api/authApi';
 import { useCurrentUser } from '../context/UserContext';
@@ -64,6 +64,12 @@ export default function UsersPage() {
     enabled: isAdmin,
   });
 
+  const { data: inactiveUsers = [] } = useQuery({
+    queryKey: ['inactiveUsers'],
+    queryFn: getInactiveUsers,
+    enabled: isAdmin,
+  });
+
   const createMutation = useMutation({
     mutationFn: () => createUser({ username, email, password, role }),
     onSuccess: () => {
@@ -79,10 +85,13 @@ export default function UsersPage() {
     mutationFn: (id: number) => deleteUser(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
+      queryClient.invalidateQueries({ queryKey: ['inactiveUsers'] });
       queryClient.invalidateQueries({ queryKey: ['projects'] });
+      queryClient.invalidateQueries({ queryKey: ['projectMembers'] });
+      queryClient.invalidateQueries({ queryKey: ['projectSheet'] });
       setDeleteTarget(null);
     },
-    onError: (err: Error) => alert(err.message || 'Failed to delete user'),
+    onError: (err: Error) => alert(err.message || 'Failed to deactivate user'),
   });
 
   const approveMutation = useMutation({
@@ -246,6 +255,46 @@ export default function UsersPage() {
         </div>
       )}
 
+      {/* Inactive users (ADMIN only) */}
+      {isAdmin && inactiveUsers.length > 0 && (
+        <div className="mt-8">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-500 mb-3">
+            <UserX className="w-4 h-4" /> Inactive Users ({inactiveUsers.length})
+          </h2>
+          <div className="bg-gray-50 border border-gray-200 rounded-xl overflow-hidden">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-200">
+                  <th className="px-5 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">ID</th>
+                  <th className="px-5 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Username</th>
+                  <th className="px-5 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Email</th>
+                  <th className="px-5 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Role</th>
+                  <th className="px-5 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Deactivated</th>
+                </tr>
+              </thead>
+              <tbody>
+                {inactiveUsers.map((user: User, i: number) => (
+                  <tr key={user.id} className={`border-b border-gray-100 last:border-0 ${i % 2 === 0 ? 'bg-gray-50' : 'bg-gray-100/40'}`}>
+                    <td className="px-5 py-3"><CopyId id={user.id} /></td>
+                    <td className="px-5 py-3 font-medium text-gray-400 flex items-center gap-2">
+                      {user.username}
+                      <span className="text-xs font-medium bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded">INACTIVE</span>
+                    </td>
+                    <td className="px-5 py-3 text-gray-400">{user.email}</td>
+                    <td className="px-5 py-3">
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full opacity-50 ${ROLE_COLORS[user.role]}`}>
+                        {user.role}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3 text-gray-400 text-xs">{formatDate(user.createdAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Create Modal (ADMIN only) */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -341,13 +390,24 @@ export default function UsersPage() {
       {deleteTarget !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-white rounded-xl p-6 shadow-xl w-full max-w-sm mx-4">
-            <h3 className="text-base font-semibold text-gray-800 mb-2">Delete User?</h3>
-            <p className="text-sm text-gray-600 mb-6">This will permanently delete this user and all their associated data.</p>
+            <div className="flex items-start gap-3 mb-4">
+              <div className="bg-amber-100 rounded-full p-2 shrink-0">
+                <UserX className="w-5 h-5 text-amber-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-gray-800">Deactivate User?</h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  This user will be marked as <strong>INACTIVE</strong> and can no longer log in.
+                  All their test cases and assignments will be preserved and labelled <strong>(INACTIVE)</strong>.
+                  This action cannot be undone from the UI.
+                </p>
+              </div>
+            </div>
             <div className="flex gap-3">
               <button onClick={() => setDeleteTarget(null)} className="flex-1 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
               <button onClick={() => deleteMutation.mutate(deleteTarget)} disabled={deleteMutation.isPending}
-                className="flex-1 py-2 text-sm font-medium bg-red-600 hover:bg-red-700 text-white rounded-lg disabled:opacity-50">
-                {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+                className="flex-1 py-2 text-sm font-medium bg-amber-600 hover:bg-amber-700 text-white rounded-lg disabled:opacity-50">
+                {deleteMutation.isPending ? 'Deactivating...' : 'Deactivate'}
               </button>
             </div>
           </div>

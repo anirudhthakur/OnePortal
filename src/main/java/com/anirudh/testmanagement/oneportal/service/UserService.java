@@ -4,6 +4,7 @@ import com.anirudh.testmanagement.oneportal.dto.UserDTO;
 import com.anirudh.testmanagement.oneportal.entity.User;
 import com.anirudh.testmanagement.oneportal.entity.User.Role;
 import com.anirudh.testmanagement.oneportal.exception.ResourceNotFoundException;
+import com.anirudh.testmanagement.oneportal.repository.ProjectMemberRepository;
 import com.anirudh.testmanagement.oneportal.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -20,13 +21,18 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final ProjectMemberRepository projectMemberRepository;
 
     public Page<UserDTO.Response> findAll(Pageable pageable) {
-        return userRepository.findByEnabled(true, pageable).map(this::toResponse);
+        return userRepository.findByEnabledAndDeletedFalse(true, pageable).map(this::toResponse);
     }
 
     public Page<UserDTO.Response> findPending(Pageable pageable) {
-        return userRepository.findByEnabled(false, pageable).map(this::toResponse);
+        return userRepository.findByEnabledAndDeletedFalse(false, pageable).map(this::toResponse);
+    }
+
+    public Page<UserDTO.Response> findInactive(Pageable pageable) {
+        return userRepository.findByDeletedTrue(pageable).map(this::toResponse);
     }
 
     public UserDTO.Response findById(Long id) {
@@ -70,7 +76,24 @@ public class UserService {
 
     @Transactional
     public void delete(Long id) {
-        userRepository.delete(getOrThrow(id));
+        User user = getOrThrow(id);
+
+        // Free the unique username/email slots so a new user with the same
+        // credentials can be created again after this person leaves.
+        String suffix = "_DEL" + id;
+        String rawUsername = user.getUsername();
+        String safePrefix = rawUsername.length() > (50 - suffix.length())
+                ? rawUsername.substring(0, 50 - suffix.length())
+                : rawUsername;
+        user.setUsername(safePrefix + suffix);
+        user.setEmail("deleted_" + id + "@oneportal.internal");
+
+        // Remove from all project memberships so they disappear from project views.
+        projectMemberRepository.deleteByUserId(id);
+
+        user.setDeleted(true);
+        user.setEnabled(false);
+        userRepository.save(user);
     }
 
     @Transactional
@@ -97,6 +120,7 @@ public class UserService {
                 .email(user.getEmail())
                 .role(user.getRole())
                 .enabled(user.isEnabled())
+                .deleted(user.isDeleted())
                 .createdAt(user.getCreatedAt())
                 .updatedAt(user.getUpdatedAt())
                 .build();

@@ -34,6 +34,12 @@ public class UserController {
         return userService.findPending(pageable);
     }
 
+    @GetMapping("/inactive")
+    @Operation(summary = "List deactivated (soft-deleted) users (ADMIN only)")
+    public Page<UserDTO.Response> findInactive(@PageableDefault(size = 200) Pageable pageable) {
+        return userService.findInactive(pageable);
+    }
+
     @GetMapping("/{id}")
     @Operation(summary = "Get a user by ID")
     public UserDTO.Response findById(@PathVariable Long id) {
