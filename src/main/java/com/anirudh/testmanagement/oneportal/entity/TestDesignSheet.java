@@ -37,6 +37,12 @@ public class TestDesignSheet {
     @JoinColumn(name = "project_id")
     private Project project;
 
+    @Column
+    private String executionDateColumnName;
+
+    @Column
+    private String channelColumnName;
+
     @OneToMany(mappedBy = "sheet", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<TestDesignRow> rows = new ArrayList<>();

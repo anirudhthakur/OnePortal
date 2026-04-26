@@ -36,9 +36,13 @@ public class DefectController {
             @RequestParam Long requesterId,
             @RequestParam String idColumnName,
             @RequestParam String summaryColumnName,
-            @RequestParam(required = false) String statusColumnName) {
+            @RequestParam(required = false) String statusColumnName,
+            @RequestParam(required = false) String detectedDateColumnName,
+            @RequestParam(required = false) String resolvedDateColumnName,
+            @RequestParam(required = false) String severityColumnName) {
         return ResponseEntity.ok(
-                defectService.saveSheet(file, projectId, requesterId, idColumnName, summaryColumnName, statusColumnName));
+                defectService.saveSheet(file, projectId, requesterId, idColumnName, summaryColumnName,
+                        statusColumnName, detectedDateColumnName, resolvedDateColumnName, severityColumnName));
     }
 
     @Operation(summary = "Get defect sheet summary for a project")

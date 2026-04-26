@@ -10,6 +10,9 @@ export interface DefectSheetSummary {
   idColumnName: string;
   summaryColumnName: string;
   statusColumnName: string | null;
+  detectedDateColumnName: string | null;
+  resolvedDateColumnName: string | null;
+  severityColumnName: string | null;
   totalRows: number;
   createdAt: string;
   uploadedByUsername: string | null;

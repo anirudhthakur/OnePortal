@@ -11,6 +11,7 @@ import ProjectsPage from './pages/ProjectsPage';
 import ProjectDetailPage from './pages/ProjectDetailPage';
 import ProjectTestCasesPage from './pages/ProjectTestCasesPage';
 import ProjectDefectsPage from './pages/ProjectDefectsPage';
+import ProjectReportPage from './pages/ProjectReportPage';
 import UsersPage from './pages/UsersPage';
 
 const queryClient = new QueryClient({
@@ -45,6 +46,7 @@ export default function App() {
                 <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
                 <Route path="/projects/:projectId/test-cases" element={<ProjectTestCasesPage />} />
                 <Route path="/projects/:projectId/defects" element={<ProjectDefectsPage />} />
+                <Route path="/projects/:projectId/report" element={<ProjectReportPage />} />
                 <Route path="/test-designs" element={<TestDesignsPage />} />
                 <Route path="/test-designs/:sheetId" element={<SheetDetailPage />} />
               </Route>

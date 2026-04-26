@@ -12,12 +12,16 @@ export const uploadExcel = async (
   file: File,
   uploaderId?: number,
   projectId?: number,
+  executionDateColumnName?: string,
+  channelColumnName?: string,
 ): Promise<UploadResponse> => {
   const form = new FormData();
   form.append('file', file);
-  const params: Record<string, number> = {};
+  const params: Record<string, string | number> = {};
   if (uploaderId != null) params.uploaderId = uploaderId;
   if (projectId != null) params.projectId = projectId;
+  if (executionDateColumnName) params.executionDateColumnName = executionDateColumnName;
+  if (channelColumnName) params.channelColumnName = channelColumnName;
   const { data } = await api.post<UploadResponse>('/api/v1/excel/upload', form, { params });
   return data;
 };
@@ -86,11 +90,22 @@ export const replaceSheet = async (
   file: File,
   uploaderId: number | undefined,
   projectId: number,
+  executionDateColumnName?: string,
+  channelColumnName?: string,
 ): Promise<UploadResponse> => {
   const form = new FormData();
   form.append('file', file);
-  const params: Record<string, number> = { projectId };
+  const params: Record<string, string | number> = { projectId };
   if (uploaderId != null) params.uploaderId = uploaderId;
+  if (executionDateColumnName) params.executionDateColumnName = executionDateColumnName;
+  if (channelColumnName) params.channelColumnName = channelColumnName;
   const { data } = await api.post<UploadResponse>('/api/v1/excel/replace', form, { params });
+  return data;
+};
+
+export const parseTestCaseHeaders = async (file: File): Promise<string[]> => {
+  const form = new FormData();
+  form.append('file', file);
+  const { data } = await api.post<string[]>('/api/v1/excel/parse-headers', form);
   return data;
 };

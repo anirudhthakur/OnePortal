@@ -14,7 +14,7 @@ import {
 import {
   getProject, getProjectMembers, addProjectMember, removeProjectMember,
 } from '../api/projectApi';
-import { getSheetByProject, uploadExcel, replaceSheet } from '../api/excelApi';
+import { getSheetByProject, uploadExcel, replaceSheet, parseTestCaseHeaders } from '../api/excelApi';
 import {
   getDefectSheetByProject, parseHeaders, saveDefectSheet, deleteDefectSheet, getDefectRows,
 } from '../api/defectApi';
@@ -127,6 +127,19 @@ export default function ProjectDetailPage() {
   const [selectedIdCol, setSelectedIdCol] = useState('');
   const [selectedSummaryCol, setSelectedSummaryCol] = useState('');
   const [selectedStatusCol, setSelectedStatusCol] = useState('');
+  const [selectedDetectedDateCol, setSelectedDetectedDateCol] = useState('');
+  const [selectedResolvedDateCol, setSelectedResolvedDateCol] = useState('');
+  const [selectedSeverityCol, setSelectedSeverityCol] = useState('');
+
+  // Test case column mapping modal state
+  const [showTCMappingModal, setShowTCMappingModal] = useState(false);
+  const [pendingTCFile, setPendingTCFile] = useState<File | null>(null);
+  const [tcIsReplace, setTcIsReplace] = useState(false);
+  const [tcParsedColumns, setTcParsedColumns] = useState<string[]>([]);
+  const [selectedExecDateCol, setSelectedExecDateCol] = useState('');
+  const [selectedChannelCol, setSelectedChannelCol] = useState('');
+  const [tcMappingError, setTcMappingError] = useState<string | null>(null);
+  const [isParsing, setIsParsing] = useState(false);
   const [columnMappingError, setColumnMappingError] = useState<string | null>(null);
   const [isParsingHeaders, setIsParsingHeaders] = useState(false);
 
@@ -275,33 +288,37 @@ export default function ProjectDetailPage() {
   });
 
   const uploadMutation = useMutation({
-    mutationFn: (file: File) => {
+    mutationFn: ({ file, execDateCol, channelCol }: { file: File; execDateCol?: string; channelCol?: string }) => {
       if (!currentUser) throw new Error('No user selected');
-      return uploadExcel(file, currentUser.id, id);
+      return uploadExcel(file, currentUser.id, id, execDateCol, channelCol);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['projectSheet', id] });
       setUploadError(null);
+      setShowTCMappingModal(false);
+      setPendingTCFile(null);
     },
     onError: (err: Error) => setUploadError(err.message || 'Upload failed'),
   });
 
   const replaceMutation = useMutation({
-    mutationFn: (file: File) => {
+    mutationFn: ({ file, execDateCol, channelCol }: { file: File; execDateCol?: string; channelCol?: string }) => {
       if (!currentUser) throw new Error('No user selected');
-      return replaceSheet(file, currentUser.id, id);
+      return replaceSheet(file, currentUser.id, id, execDateCol, channelCol);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['projectSheet', id] });
       setReplaceError(null);
+      setShowTCMappingModal(false);
+      setPendingTCFile(null);
     },
     onError: (err: Error) => setReplaceError(err.message || 'Replace failed'),
   });
 
   const saveDefectMutation = useMutation({
-    mutationFn: ({ file, idCol, summaryCol, statusCol }: { file: File; idCol: string; summaryCol: string; statusCol?: string }) => {
+    mutationFn: ({ file, idCol, summaryCol, statusCol, detectedDateCol, resolvedDateCol, severityCol }: { file: File; idCol: string; summaryCol: string; statusCol?: string; detectedDateCol?: string; resolvedDateCol?: string; severityCol?: string }) => {
       if (!currentUser) throw new Error('No user selected');
-      return saveDefectSheet(file, id, currentUser.id, idCol, summaryCol, statusCol || undefined);
+      return saveDefectSheet(file, id, currentUser.id, idCol, summaryCol, statusCol || undefined, detectedDateCol || undefined, resolvedDateCol || undefined, severityCol || undefined);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['defectSheet', id] });
@@ -331,26 +348,63 @@ export default function ProjectDetailPage() {
     onError: (err: Error) => alert(err.message || 'Failed to delete defect sheet'),
   });
 
-  const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
     if (!file.name.toLowerCase().endsWith('.xlsx')) {
       setUploadError('Only .xlsx files are supported');
       return;
     }
-    uploadMutation.mutate(file);
+    setIsParsing(true);
+    try {
+      const cols = await parseTestCaseHeaders(file);
+      setTcParsedColumns(cols);
+      setPendingTCFile(file);
+      setTcIsReplace(false);
+      setSelectedExecDateCol('');
+      setSelectedChannelCol('');
+      setTcMappingError(null);
+      setShowTCMappingModal(true);
+    } catch {
+      uploadMutation.mutate({ file });
+    } finally {
+      setIsParsing(false);
+    }
   };
 
-  const handleReplace = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleReplace = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
     if (!file.name.toLowerCase().endsWith('.xlsx')) {
       setReplaceError('Only .xlsx files are supported');
       return;
     }
-    replaceMutation.mutate(file);
-    // reset input so same file can be re-selected
-    e.target.value = '';
+    setIsParsing(true);
+    try {
+      const cols = await parseTestCaseHeaders(file);
+      setTcParsedColumns(cols);
+      setPendingTCFile(file);
+      setTcIsReplace(true);
+      setSelectedExecDateCol('');
+      setSelectedChannelCol('');
+      setTcMappingError(null);
+      setShowTCMappingModal(true);
+    } catch {
+      replaceMutation.mutate({ file });
+    } finally {
+      setIsParsing(false);
+    }
+  };
+
+  const handleConfirmTCMapping = () => {
+    if (!pendingTCFile) return;
+    if (tcIsReplace) {
+      replaceMutation.mutate({ file: pendingTCFile, execDateCol: selectedExecDateCol || undefined, channelCol: selectedChannelCol || undefined });
+    } else {
+      uploadMutation.mutate({ file: pendingTCFile, execDateCol: selectedExecDateCol || undefined, channelCol: selectedChannelCol || undefined });
+    }
   };
 
   const handleDefectFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -385,7 +439,7 @@ export default function ProjectDetailPage() {
       setColumnMappingError('Please select both columns');
       return;
     }
-    saveDefectMutation.mutate({ file: pendingDefectFile, idCol: selectedIdCol, summaryCol: selectedSummaryCol, statusCol: selectedStatusCol || undefined });
+    saveDefectMutation.mutate({ file: pendingDefectFile, idCol: selectedIdCol, summaryCol: selectedSummaryCol, statusCol: selectedStatusCol || undefined, detectedDateCol: selectedDetectedDateCol || undefined, resolvedDateCol: selectedResolvedDateCol || undefined, severityCol: selectedSeverityCol || undefined });
   };
 
   if (loadingProject) {
@@ -696,7 +750,14 @@ export default function ProjectDetailPage() {
 
       {/* View All Test Cases button — only shown when a sheet exists */}
       {sheet && (
-        <div className="flex justify-end mb-6">
+        <div className="flex justify-end gap-3 mb-6">
+          <button
+            onClick={() => navigate(`/projects/${id}/report`)}
+            className="flex items-center gap-2 text-sm font-semibold bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg shadow-sm transition-colors"
+          >
+            <BarChart2 className="w-4 h-4" />
+            Generate Report
+          </button>
           <button
             onClick={() => navigate(`/projects/${id}/test-cases`)}
             className="flex items-center gap-2 text-sm font-semibold bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-lg shadow-sm transition-colors"
@@ -872,6 +933,67 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
+      {/* Test Case Column Mapping Modal */}
+      {showTCMappingModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-xl p-6 shadow-xl w-full max-w-md mx-4">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-base font-semibold text-gray-800 flex items-center gap-2">
+                <TableProperties className="w-4 h-4 text-indigo-500" /> Map Test Case Columns
+              </h3>
+              <button onClick={() => { setShowTCMappingModal(false); setPendingTCFile(null); }} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+            </div>
+            <p className="text-sm text-gray-500 mb-4">
+              Select which columns from your test case file to use for reporting. These are optional but enable richer charts.
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Execution Date Column <span className="text-gray-400 font-normal">(optional — for daily trend chart)</span></label>
+                <select
+                  value={selectedExecDateCol}
+                  onChange={e => setSelectedExecDateCol(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                >
+                  <option value="">None</option>
+                  {tcParsedColumns.map(col => <option key={col} value={col}>{col}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Channel Column <span className="text-gray-400 font-normal">(optional — for channel-wise execution chart)</span></label>
+                <select
+                  value={selectedChannelCol}
+                  onChange={e => setSelectedChannelCol(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                >
+                  <option value="">None</option>
+                  {tcParsedColumns.map(col => <option key={col} value={col}>{col}</option>)}
+                </select>
+              </div>
+              {tcMappingError && (
+                <div className="flex items-start gap-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3">
+                  <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />{tcMappingError}
+                </div>
+              )}
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => { setShowTCMappingModal(false); setPendingTCFile(null); }}
+                className="flex-1 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmTCMapping}
+                disabled={uploadMutation.isPending || replaceMutation.isPending}
+                className="flex-1 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg disabled:opacity-50"
+              >
+                {(uploadMutation.isPending || replaceMutation.isPending) ? 'Uploading...' : tcIsReplace ? 'Replace Sheet' : 'Upload Sheet'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Column Mapping Modal */}
       {showColumnMappingModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -880,7 +1002,7 @@ export default function ProjectDetailPage() {
               <h3 className="text-base font-semibold text-gray-800 flex items-center gap-2">
                 <Bug className="w-4 h-4 text-rose-500" /> Map Defect Columns
               </h3>
-              <button onClick={() => { setShowColumnMappingModal(false); setPendingDefectFile(null); setSelectedStatusCol(''); }} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+              <button onClick={() => { setShowColumnMappingModal(false); setPendingDefectFile(null); setSelectedStatusCol(''); setSelectedDetectedDateCol(''); setSelectedResolvedDateCol(''); setSelectedSeverityCol(''); }} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
             </div>
             <p className="text-sm text-gray-500 mb-4">
               Select which columns from your QC extract represent the defect ID and summary.
@@ -918,6 +1040,39 @@ export default function ProjectDetailPage() {
                   {parsedColumns.map(col => <option key={col} value={col}>{col}</option>)}
                 </select>
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Detected Date Column <span className="text-gray-400 font-normal">(optional — enables detected vs resolved chart)</span></label>
+                <select
+                  value={selectedDetectedDateCol}
+                  onChange={e => setSelectedDetectedDateCol(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-400"
+                >
+                  <option value="">None</option>
+                  {parsedColumns.map(col => <option key={col} value={col}>{col}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Resolved Date Column <span className="text-gray-400 font-normal">(optional — enables detected vs resolved chart)</span></label>
+                <select
+                  value={selectedResolvedDateCol}
+                  onChange={e => setSelectedResolvedDateCol(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-400"
+                >
+                  <option value="">None</option>
+                  {parsedColumns.map(col => <option key={col} value={col}>{col}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Severity Column <span className="text-gray-400 font-normal">(optional — enables defect severity chart)</span></label>
+                <select
+                  value={selectedSeverityCol}
+                  onChange={e => setSelectedSeverityCol(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-400"
+                >
+                  <option value="">None</option>
+                  {parsedColumns.map(col => <option key={col} value={col}>{col}</option>)}
+                </select>
+              </div>
               {columnMappingError && (
                 <div className="flex items-start gap-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3">
                   <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />{columnMappingError}
@@ -926,7 +1081,7 @@ export default function ProjectDetailPage() {
             </div>
             <div className="flex gap-3 mt-6">
               <button
-                onClick={() => { setShowColumnMappingModal(false); setPendingDefectFile(null); setSelectedStatusCol(''); }}
+                onClick={() => { setShowColumnMappingModal(false); setPendingDefectFile(null); setSelectedStatusCol(''); setSelectedDetectedDateCol(''); setSelectedResolvedDateCol(''); setSelectedSeverityCol(''); }}
                 className="flex-1 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50"
               >
                 Cancel

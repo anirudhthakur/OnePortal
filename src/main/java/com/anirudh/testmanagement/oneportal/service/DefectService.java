@@ -68,7 +68,8 @@ public class DefectService {
     @Transactional
     public DefectDTO.DefectSheetSummary saveSheet(
             MultipartFile file, Long projectId, Long requesterId,
-            String idColumnName, String summaryColumnName, String statusColumnName) {
+            String idColumnName, String summaryColumnName, String statusColumnName,
+            String detectedDateColumnName, String resolvedDateColumnName, String severityColumnName) {
 
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new ResourceNotFoundException("Project", projectId));
@@ -112,8 +113,19 @@ public class DefectService {
                 throw new IllegalArgumentException(
                         "Status column '" + statusColumnName + "' not found in file headers");
             }
+            if (detectedDateColumnName != null && !detectedDateColumnName.isBlank() && !columns.contains(detectedDateColumnName)) {
+                throw new IllegalArgumentException(
+                        "Detected Date column '" + detectedDateColumnName + "' not found in file headers");
+            }
+            if (resolvedDateColumnName != null && !resolvedDateColumnName.isBlank() && !columns.contains(resolvedDateColumnName)) {
+                throw new IllegalArgumentException(
+                        "Resolved Date column '" + resolvedDateColumnName + "' not found in file headers");
+            }
 
             String resolvedStatusCol = (statusColumnName != null && !statusColumnName.isBlank()) ? statusColumnName : null;
+            String resolvedDetectedDateCol = (detectedDateColumnName != null && !detectedDateColumnName.isBlank()) ? detectedDateColumnName : null;
+            String resolvedResolvedDateCol = (resolvedDateColumnName != null && !resolvedDateColumnName.isBlank()) ? resolvedDateColumnName : null;
+            String resolvedSeverityCol = (severityColumnName != null && !severityColumnName.isBlank()) ? severityColumnName : null;
 
             DefectSheet defectSheet = DefectSheet.builder()
                     .fileName(file.getOriginalFilename())
@@ -123,6 +135,9 @@ public class DefectService {
                     .idColumnName(idColumnName)
                     .summaryColumnName(summaryColumnName)
                     .statusColumnName(resolvedStatusCol)
+                    .detectedDateColumnName(resolvedDetectedDateCol)
+                    .resolvedDateColumnName(resolvedResolvedDateCol)
+                    .severityColumnName(resolvedSeverityCol)
                     .build();
             defectSheet = sheetRepository.save(defectSheet);
 
@@ -390,6 +405,9 @@ public class DefectService {
                 .idColumnName(sheet.getIdColumnName())
                 .summaryColumnName(sheet.getSummaryColumnName())
                 .statusColumnName(sheet.getStatusColumnName())
+                .detectedDateColumnName(sheet.getDetectedDateColumnName())
+                .resolvedDateColumnName(sheet.getResolvedDateColumnName())
+                .severityColumnName(sheet.getSeverityColumnName())
                 .totalRows(totalRows)
                 .createdAt(sheet.getCreatedAt())
                 .uploadedByUsername(sheet.getUploadedBy() != null ? sheet.getUploadedBy().getUsername() : null)

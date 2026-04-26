@@ -41,23 +41,26 @@ public class ExcelImportService {
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
     @Transactional
-    public TestDesignDTO.UploadResponse importExcel(MultipartFile file, Long uploaderId, Long projectId) {
-        return doImport(file, uploaderId, projectId, false);
+    public TestDesignDTO.UploadResponse importExcel(MultipartFile file, Long uploaderId, Long projectId,
+                                                     String executionDateColumnName, String channelColumnName) {
+        return doImport(file, uploaderId, projectId, false, executionDateColumnName, channelColumnName);
     }
 
     @Transactional
-    public TestDesignDTO.UploadResponse replaceSheet(MultipartFile file, Long uploaderId, Long projectId) {
+    public TestDesignDTO.UploadResponse replaceSheet(MultipartFile file, Long uploaderId, Long projectId,
+                                                      String executionDateColumnName, String channelColumnName) {
         if (projectId == null) throw new IllegalArgumentException("projectId is required for replace");
         sheetRepository.findByProjectId(projectId).ifPresent(existing -> {
             rowRepository.deleteLinkedDefectsBySheetId(existing.getId());
             rowRepository.deleteBySheetId(existing.getId());
             sheetRepository.delete(existing);
         });
-        return doImport(file, uploaderId, projectId, true);
+        return doImport(file, uploaderId, projectId, true, executionDateColumnName, channelColumnName);
     }
 
     private TestDesignDTO.UploadResponse doImport(MultipartFile file, Long uploaderId,
-                                                   Long projectId, boolean smartMapping) {
+                                                   Long projectId, boolean smartMapping,
+                                                   String executionDateColumnName, String channelColumnName) {
         User uploader = uploaderId != null
                 ? userRepository.findById(uploaderId).orElse(null)
                 : null;
@@ -134,6 +137,8 @@ public class ExcelImportService {
                     .sheetName(sheetTabName)
                     .uploadedBy(uploader)
                     .project(project)
+                    .executionDateColumnName(executionDateColumnName != null && !executionDateColumnName.isBlank() ? executionDateColumnName : null)
+                    .channelColumnName(channelColumnName != null && !channelColumnName.isBlank() ? channelColumnName : null)
                     .build();
             designSheet = sheetRepository.save(designSheet);
 
@@ -209,6 +214,23 @@ public class ExcelImportService {
                     .columns(columns)
                     .build();
 
+        } catch (IOException e) {
+            throw new IllegalArgumentException("Failed to read Excel file: " + e.getMessage(), e);
+        }
+    }
+
+    public List<String> parseHeaders(MultipartFile file) {
+        try (Workbook workbook = WorkbookFactory.create(file.getInputStream())) {
+            Sheet sheet = workbook.getSheetAt(0);
+            Row headerRow = sheet.getRow(0);
+            if (headerRow == null) throw new IllegalArgumentException("Excel file has no header row");
+            List<String> columns = new ArrayList<>();
+            for (int c = 0; c < headerRow.getLastCellNum(); c++) {
+                Cell cell = headerRow.getCell(c, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK);
+                String header = cell.getStringCellValue().trim();
+                columns.add(header.isEmpty() ? "Column_" + (c + 1) : header);
+            }
+            return columns;
         } catch (IOException e) {
             throw new IllegalArgumentException("Failed to read Excel file: " + e.getMessage(), e);
         }

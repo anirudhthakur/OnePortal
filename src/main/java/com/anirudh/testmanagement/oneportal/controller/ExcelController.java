@@ -13,6 +13,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/api/v1/excel")
 @RequiredArgsConstructor
@@ -21,13 +23,21 @@ public class ExcelController {
 
     private final ExcelImportService excelImportService;
 
+    @PostMapping("/parse-headers")
+    @Operation(summary = "Parse column headers from an .xlsx file without persisting")
+    public List<String> parseHeaders(@RequestParam("file") MultipartFile file) {
+        return excelImportService.parseHeaders(file);
+    }
+
     @PostMapping("/upload")
     @ResponseStatus(HttpStatus.CREATED)
     @Operation(summary = "Upload an .xlsx file and import test design rows")
     public TestDesignDTO.UploadResponse upload(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "uploaderId", required = false) Long uploaderId,
-            @RequestParam(value = "projectId", required = false) Long projectId) {
+            @RequestParam(value = "projectId", required = false) Long projectId,
+            @RequestParam(value = "executionDateColumnName", required = false) String executionDateColumnName,
+            @RequestParam(value = "channelColumnName", required = false) String channelColumnName) {
 
         if (file.isEmpty()) {
             throw new IllegalArgumentException("Uploaded file is empty");
@@ -36,7 +46,7 @@ public class ExcelController {
         if (name == null || !name.toLowerCase().endsWith(".xlsx")) {
             throw new IllegalArgumentException("Only .xlsx files are supported");
         }
-        return excelImportService.importExcel(file, uploaderId, projectId);
+        return excelImportService.importExcel(file, uploaderId, projectId, executionDateColumnName, channelColumnName);
     }
 
     @GetMapping("/sheets")
@@ -93,14 +103,16 @@ public class ExcelController {
     public TestDesignDTO.UploadResponse replace(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "uploaderId", required = false) Long uploaderId,
-            @RequestParam Long projectId) {
+            @RequestParam Long projectId,
+            @RequestParam(value = "executionDateColumnName", required = false) String executionDateColumnName,
+            @RequestParam(value = "channelColumnName", required = false) String channelColumnName) {
 
         if (file.isEmpty()) throw new IllegalArgumentException("Uploaded file is empty");
         String name = file.getOriginalFilename();
         if (name == null || !name.toLowerCase().endsWith(".xlsx")) {
             throw new IllegalArgumentException("Only .xlsx files are supported");
         }
-        return excelImportService.replaceSheet(file, uploaderId, projectId);
+        return excelImportService.replaceSheet(file, uploaderId, projectId, executionDateColumnName, channelColumnName);
     }
 
     @DeleteMapping("/sheets/{sheetId}")

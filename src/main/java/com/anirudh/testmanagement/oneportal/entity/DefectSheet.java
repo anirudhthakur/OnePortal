@@ -46,6 +46,15 @@ public class DefectSheet {
     @Column
     private String statusColumnName;
 
+    @Column
+    private String detectedDateColumnName;
+
+    @Column
+    private String resolvedDateColumnName;
+
+    @Column
+    private String severityColumnName;
+
     @OneToMany(mappedBy = "sheet", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<DefectRow> rows = new ArrayList<>();

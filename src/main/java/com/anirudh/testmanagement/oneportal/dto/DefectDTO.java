@@ -26,6 +26,9 @@ public class DefectDTO {
         String idColumnName;
         String summaryColumnName;
         String statusColumnName;
+        String detectedDateColumnName;
+        String resolvedDateColumnName;
+        String severityColumnName;
         long totalRows;
         LocalDateTime createdAt;
         String uploadedByUsername;

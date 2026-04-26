@@ -33,6 +33,7 @@ public class SecurityConfig {
             "/api/v1/test-cases/**",
             "/api/v1/test-executions/**",
             "/api/v1/defects/**",
+            "/api/v1/reports/**",
             "/h2-console/**"
     };
 
@@ -54,7 +55,7 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOrigins(List.of("http://localhost:5173"));
+        config.setAllowedOriginPatterns(List.of("http://localhost:[*]"));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);
