@@ -11,6 +11,8 @@ export interface ExecutionSummary {
   passed: number;
   failed: number;
   blocked: number;
+  notApplicable: number;
+  notDelivered: number;
   totalDefects: number;
   openDefects: number;
 }
@@ -21,6 +23,8 @@ export interface DailyActivity {
   passed: number;
   failed: number;
   blocked: number;
+  notApplicable: number;
+  notDelivered: number;
 }
 
 export interface StatusCount {
@@ -36,6 +40,8 @@ export interface ChannelExecution {
   blocked: number;
   inProgress: number;
   notStarted: number;
+  notApplicable: number;
+  notDelivered: number;
 }
 
 export interface DetectedVsResolvedPoint {
@@ -50,6 +56,7 @@ export interface DefectReportRow {
   status: string | null;
   detectedDate: string | null;
   resolvedDate: string | null;
+  impactedScenarios: number;
   allData: Record<string, string>;
 }
 

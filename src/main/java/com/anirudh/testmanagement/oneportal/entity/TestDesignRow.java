@@ -17,7 +17,7 @@ import java.util.Set;
 public class TestDesignRow {
 
     public enum RowStatus {
-        NOT_STARTED, IN_PROGRESS, PASSED, FAILED, BLOCKED
+        NOT_STARTED, IN_PROGRESS, PASSED, FAILED, BLOCKED, NOT_APPLICABLE, NOT_DELIVERED
     }
 
     @Id

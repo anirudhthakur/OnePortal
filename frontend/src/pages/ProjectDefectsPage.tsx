@@ -132,6 +132,25 @@ export default function ProjectDefectsPage() {
   const myRole: ProjectRole | null = myMembership?.role ?? null;
   const isTesterOrOwner = myRole === 'OWNER' || myRole === 'TESTER';
 
+  const uniqueColValues: Record<string, string[]> = useMemo(() => {
+    if (!defectPage) return {};
+    const map: Record<string, Set<string>> = {};
+    for (const row of defectPage.rows) {
+      for (const col of (defectPage.columns ?? [])) {
+        const val = (row.data[col] ?? '').trim();
+        if (val) {
+          if (!map[col]) map[col] = new Set();
+          map[col].add(val);
+        }
+      }
+    }
+    const result: Record<string, string[]> = {};
+    for (const col of (defectPage?.columns ?? [])) {
+      result[col] = map[col] ? Array.from(map[col]).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) : [];
+    }
+    return result;
+  }, [defectPage]);
+
   // Build a map: defectRowId -> number of test rows that reference it
   const linkedTestCounts = useMemo<Record<number, number>>(() => {
     if (!testSheet?.rows) return {};
@@ -171,10 +190,7 @@ export default function ProjectDefectsPage() {
     // Apply per-column filters
     for (const [col, val] of Object.entries(columnFilters)) {
       if (!val.trim()) continue;
-      const lv = val.toLowerCase();
-      rows = rows.filter((row: DefectRowResponse) =>
-        (row.data[col] ?? '').toLowerCase().includes(lv)
-      );
+      rows = rows.filter((row: DefectRowResponse) => (row.data[col] ?? '') === val);
     }
 
     if (sortCol && sortDir) {
@@ -444,16 +460,19 @@ export default function ProjectDefectsPage() {
                 <th className="sticky left-0 z-10 bg-white px-2 py-1" />
                 {(defectPage?.columns ?? []).map((col: string) => (
                   <th key={col} style={{ width: colWidths[col], minWidth: colWidths[col] ?? 80 }} className="px-2 py-1">
-                    <input
-                      type="text"
-                      placeholder={`Filter…`}
+                    <select
                       value={columnFilters[col] ?? ''}
                       onChange={(e) => {
                         setColumnFilters(prev => ({ ...prev, [col]: e.target.value }));
                         setPage(0);
                       }}
-                      className="w-full min-w-20 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-rose-400 focus:border-rose-400"
-                    />
+                      className="w-full min-w-20 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-rose-400 focus:border-rose-400 bg-white"
+                    >
+                      <option value="">All</option>
+                      {(uniqueColValues[col] ?? []).map(v => (
+                        <option key={v} value={v}>{v}</option>
+                      ))}
+                    </select>
                   </th>
                 ))}
                 <th className="px-2 py-1" />

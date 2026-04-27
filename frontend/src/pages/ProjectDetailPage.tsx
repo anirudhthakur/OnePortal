@@ -44,18 +44,22 @@ const STATUS_LABELS: Record<RowStatus, string> = {
   PASSED: 'Passed',
   FAILED: 'Failed',
   BLOCKED: 'Blocked',
+  NOT_APPLICABLE: 'N/A',
+  NOT_DELIVERED: 'Not Delivered',
 };
 
 // Colors for chart segments (matches STATUS_COLORS palette)
 const STATUS_CHART_COLORS: Record<RowStatus, string> = {
   NOT_STARTED: '#9ca3af',
-  IN_PROGRESS: '#3b82f6',
+  IN_PROGRESS: '#eab308',
   PASSED: '#22c55e',
   FAILED: '#ef4444',
   BLOCKED: '#f97316',
+  NOT_APPLICABLE: '#d1d5db',
+  NOT_DELIVERED: '#374151',
 };
 
-const ALL_STATUSES: RowStatus[] = ['NOT_STARTED', 'IN_PROGRESS', 'PASSED', 'FAILED', 'BLOCKED'];
+const ALL_STATUSES: RowStatus[] = ['NOT_STARTED', 'IN_PROGRESS', 'PASSED', 'FAILED', 'BLOCKED', 'NOT_APPLICABLE', 'NOT_DELIVERED'];
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -201,7 +205,7 @@ export default function ProjectDetailPage() {
   const statusChartData = useMemo(() => {
     if (!sheet) return [];
     const counts: Record<RowStatus, number> = {
-      NOT_STARTED: 0, IN_PROGRESS: 0, PASSED: 0, FAILED: 0, BLOCKED: 0,
+      NOT_STARTED: 0, IN_PROGRESS: 0, PASSED: 0, FAILED: 0, BLOCKED: 0, NOT_APPLICABLE: 0, NOT_DELIVERED: 0,
     };
     sheet.rows.forEach((row: RowWithMeta) => {
       const s = row.rowStatus ?? 'NOT_STARTED';
@@ -240,9 +244,13 @@ export default function ProjectDetailPage() {
     const passed = sheet.rows.filter((r: RowWithMeta) => r.rowStatus === 'PASSED').length;
     const failed = sheet.rows.filter((r: RowWithMeta) => r.rowStatus === 'FAILED').length;
     const blocked = sheet.rows.filter((r: RowWithMeta) => r.rowStatus === 'BLOCKED').length;
+    const inProgress = sheet.rows.filter((r: RowWithMeta) => r.rowStatus === 'IN_PROGRESS').length;
+    const notStarted = sheet.rows.filter((r: RowWithMeta) => !r.rowStatus || r.rowStatus === 'NOT_STARTED').length;
+    const notApplicable = sheet.rows.filter((r: RowWithMeta) => r.rowStatus === 'NOT_APPLICABLE').length;
+    const notDelivered = sheet.rows.filter((r: RowWithMeta) => r.rowStatus === 'NOT_DELIVERED').length;
     const assigned = sheet.rows.filter((r: RowWithMeta) => r.assignedToId !== null).length;
     const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
-    return { total, passed, failed, blocked, assigned, passRate };
+    return { total, passed, failed, blocked, inProgress, notStarted, notApplicable, notDelivered, assigned, passRate };
   }, [sheet]);
 
   // Defect status chart data
@@ -600,7 +608,7 @@ export default function ProjectDetailPage() {
             ) : (
               /* Quick stats row when sheet is present */
               <div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-2">
+                <div className="grid grid-cols-4 gap-2 mt-2">
                   <div className="bg-gray-50 rounded-lg p-3 text-center">
                     <p className="text-xl font-bold text-gray-800">{stats?.total ?? 0}</p>
                     <p className="text-xs text-gray-500 mt-0.5">Total Cases</p>
@@ -612,6 +620,26 @@ export default function ProjectDetailPage() {
                   <div className="bg-red-50 rounded-lg p-3 text-center">
                     <p className="text-xl font-bold text-red-600">{stats?.failed ?? 0}</p>
                     <p className="text-xs text-red-500 mt-0.5">Failed</p>
+                  </div>
+                  <div className="bg-orange-50 rounded-lg p-3 text-center">
+                    <p className="text-xl font-bold text-orange-600">{stats?.blocked ?? 0}</p>
+                    <p className="text-xs text-orange-500 mt-0.5">Blocked</p>
+                  </div>
+                  <div className="bg-blue-50 rounded-lg p-3 text-center">
+                    <p className="text-xl font-bold text-blue-600">{stats?.inProgress ?? 0}</p>
+                    <p className="text-xs text-blue-500 mt-0.5">In Progress</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3 text-center">
+                    <p className="text-xl font-bold text-gray-500">{stats?.notStarted ?? 0}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">Not Started</p>
+                  </div>
+                  <div className="bg-purple-50 rounded-lg p-3 text-center">
+                    <p className="text-xl font-bold text-purple-600">{stats?.notApplicable ?? 0}</p>
+                    <p className="text-xs text-purple-500 mt-0.5">N/A</p>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg p-3 text-center">
+                    <p className="text-xl font-bold text-slate-600">{stats?.notDelivered ?? 0}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">Not Delivered</p>
                   </div>
                   <div className="bg-indigo-50 rounded-lg p-3 text-center">
                     <p className="text-xl font-bold text-indigo-600">{stats?.assigned ?? 0}</p>

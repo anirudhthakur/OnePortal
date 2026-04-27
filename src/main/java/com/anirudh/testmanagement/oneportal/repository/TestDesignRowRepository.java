@@ -23,4 +23,15 @@ public interface TestDesignRowRepository extends JpaRepository<TestDesignRow, Lo
     @Modifying
     @Query("DELETE FROM TestDesignRow r WHERE r.sheet.id = :sheetId")
     void deleteBySheetId(@Param("sheetId") Long sheetId);
+
+    /**
+     * Returns [defectRowId, linkedTestCount] pairs for all defects
+     * that have at least one test-design row linked to them.
+     * Used to compute "Impacted Scenarios" in the report.
+     */
+    @Query(nativeQuery = true,
+        value = "SELECT defect_row_id, COUNT(row_id) " +
+                "FROM test_design_row_linked_defects " +
+                "GROUP BY defect_row_id")
+    List<Object[]> countLinkedTestsByDefectId();
 }

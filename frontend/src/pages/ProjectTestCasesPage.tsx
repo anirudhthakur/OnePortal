@@ -22,6 +22,8 @@ const STATUS_LABELS: Record<RowStatus, string> = {
   PASSED: 'Passed',
   FAILED: 'Failed',
   BLOCKED: 'Blocked',
+  NOT_APPLICABLE: 'N/A',
+  NOT_DELIVERED: 'Not Delivered',
 };
 
 const FUNCTIONAL_COLUMN_NAMES = new Set([
@@ -33,13 +35,15 @@ const FUNCTIONAL_COLUMN_NAMES = new Set([
 
 const STATUS_COLORS: Record<RowStatus, string> = {
   NOT_STARTED: 'bg-gray-100 text-gray-600',
-  IN_PROGRESS: 'bg-blue-100 text-blue-700',
+  IN_PROGRESS: 'bg-yellow-100 text-yellow-700',
   PASSED: 'bg-green-100 text-green-700',
   FAILED: 'bg-red-100 text-red-700',
   BLOCKED: 'bg-orange-100 text-orange-700',
+  NOT_APPLICABLE: 'bg-gray-100 text-gray-400',
+  NOT_DELIVERED: 'bg-gray-800 text-white',
 };
 
-const ALL_STATUSES: RowStatus[] = ['NOT_STARTED', 'IN_PROGRESS', 'PASSED', 'FAILED', 'BLOCKED'];
+const ALL_STATUSES: RowStatus[] = ['NOT_STARTED', 'IN_PROGRESS', 'PASSED', 'FAILED', 'BLOCKED', 'NOT_APPLICABLE', 'NOT_DELIVERED'];
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
 type SortDir = 'asc' | 'desc' | null;
@@ -185,6 +189,25 @@ export default function ProjectTestCasesPage() {
     [sheet?.columns]
   );
 
+  const uniqueColValues: Record<string, string[]> = useMemo(() => {
+    if (!sheet) return {};
+    const map: Record<string, Set<string>> = {};
+    for (const row of sheet.rows) {
+      for (const col of displayColumns) {
+        const val = (row.data[col] ?? '').trim();
+        if (val) {
+          if (!map[col]) map[col] = new Set();
+          map[col].add(val);
+        }
+      }
+    }
+    const result: Record<string, string[]> = {};
+    for (const col of displayColumns) {
+      result[col] = map[col] ? Array.from(map[col]).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) : [];
+    }
+    return result;
+  }, [sheet, displayColumns]);
+
   const activeFilterCount = useMemo(
     () =>
       Object.values(columnFilters).filter(v => v.trim() !== '').length +
@@ -239,8 +262,7 @@ export default function ProjectTestCasesPage() {
     // Per data-column filters
     for (const [col, val] of Object.entries(columnFilters)) {
       if (!val.trim()) continue;
-      const lv = val.toLowerCase();
-      rows = rows.filter((row: RowWithMeta) => (row.data[col] ?? '').toLowerCase().includes(lv));
+      rows = rows.filter((row: RowWithMeta) => (row.data[col] ?? '') === val);
     }
 
     if (sortCol && sortDir) {
@@ -678,16 +700,19 @@ export default function ProjectTestCasesPage() {
                   <th className="sticky left-0 z-10 bg-white px-2 py-1" />
                   {displayColumns.map((col: string) => (
                     <th key={col} style={{ width: colWidths[col], minWidth: colWidths[col] ?? 80 }} className="px-2 py-1">
-                      <input
-                        type="text"
-                        placeholder="Filter…"
+                      <select
                         value={columnFilters[col] ?? ''}
                         onChange={(e) => {
                           setColumnFilters(prev => ({ ...prev, [col]: e.target.value }));
                           setPage(0);
                         }}
-                        className="w-full min-w-20 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 focus:border-indigo-400"
-                      />
+                        className="w-full min-w-20 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 focus:border-indigo-400 bg-white"
+                      >
+                        <option value="">All</option>
+                        {(uniqueColValues[col] ?? []).map(v => (
+                          <option key={v} value={v}>{v}</option>
+                        ))}
+                      </select>
                     </th>
                   ))}
                   {/* Assigned To filter */}
@@ -719,7 +744,25 @@ export default function ProjectTestCasesPage() {
                       ))}
                     </select>
                   </th>
-                  {defectDropdown.length > 0 && <th className="px-2 py-1 bg-rose-50/50" />}
+                  {defectDropdown.length > 0 && (
+                    <th className="px-2 py-1 bg-rose-50/50">
+                      <select
+                        value={linkedDefectFilter ?? ''}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setLinkedDefectFilter(v ? Number(v) : null);
+                          if (!v) setSearchParams({});
+                          setPage(0);
+                        }}
+                        className="w-full min-w-24 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-rose-400 focus:border-rose-400 bg-white"
+                      >
+                        <option value="">All</option>
+                        {defectDropdown.map((d: DropdownItem) => (
+                          <option key={d.rowId} value={d.rowId}>{d.defectId}</option>
+                        ))}
+                      </select>
+                    </th>
+                  )}
                   <th className="px-2 py-1" />
                 </tr>
               </thead>

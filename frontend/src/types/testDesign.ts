@@ -24,7 +24,7 @@ export interface SheetDataResponse {
   rows: Record<string, string>[];
 }
 
-export type RowStatus = 'NOT_STARTED' | 'IN_PROGRESS' | 'PASSED' | 'FAILED' | 'BLOCKED';
+export type RowStatus = 'NOT_STARTED' | 'IN_PROGRESS' | 'PASSED' | 'FAILED' | 'BLOCKED' | 'NOT_APPLICABLE' | 'NOT_DELIVERED';
 
 export interface RowWithMeta {
   rowId: number;

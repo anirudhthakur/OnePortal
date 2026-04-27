@@ -17,6 +17,8 @@ public class ReportDTO {
         long passed;
         long failed;
         long blocked;
+        long notApplicable;
+        long notDelivered;
         long totalDefects;
         long openDefects;
     }
@@ -29,6 +31,8 @@ public class ReportDTO {
         long passed;
         long failed;
         long blocked;
+        long notApplicable;
+        long notDelivered;
     }
 
     @Value
@@ -48,6 +52,8 @@ public class ReportDTO {
         long blocked;
         long notStarted;
         long inProgress;
+        long notApplicable;
+        long notDelivered;
     }
 
     @Value
@@ -66,6 +72,7 @@ public class ReportDTO {
         String status;
         String detectedDate;
         String resolvedDate;
+        long impactedScenarios;
         Map<String, String> allData;
     }
 

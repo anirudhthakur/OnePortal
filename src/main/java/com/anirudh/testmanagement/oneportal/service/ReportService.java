@@ -82,6 +82,8 @@ public class ReportService {
         long passed = testRows.stream().filter(r -> r.getRowStatus() == TestDesignRow.RowStatus.PASSED).count();
         long failed = testRows.stream().filter(r -> r.getRowStatus() == TestDesignRow.RowStatus.FAILED).count();
         long blocked = testRows.stream().filter(r -> r.getRowStatus() == TestDesignRow.RowStatus.BLOCKED).count();
+        long notApplicable = testRows.stream().filter(r -> r.getRowStatus() == TestDesignRow.RowStatus.NOT_APPLICABLE).count();
+        long notDelivered = testRows.stream().filter(r -> r.getRowStatus() == TestDesignRow.RowStatus.NOT_DELIVERED).count();
 
         List<DefectRow> allDefects = defectRowRepository.findAllByProjectId(projectId);
         long totalDefects = allDefects.size();
@@ -99,18 +101,21 @@ public class ReportService {
         return ReportDTO.ExecutionSummary.builder()
                 .total(total).notStarted(notStarted).inProgress(inProgress)
                 .passed(passed).failed(failed).blocked(blocked)
+                .notApplicable(notApplicable).notDelivered(notDelivered)
                 .totalDefects(totalDefects).openDefects(openDefects)
                 .build();
     }
 
     private List<ReportDTO.StatusCount> buildExecutionByStatus(List<TestDesignRow> testRows) {
         Map<String, Long> counts = new LinkedHashMap<>();
-        counts.put("Passed", testRows.stream().filter(r -> r.getRowStatus() == TestDesignRow.RowStatus.PASSED).count());
-        counts.put("Failed", testRows.stream().filter(r -> r.getRowStatus() == TestDesignRow.RowStatus.FAILED).count());
-        counts.put("Blocked", testRows.stream().filter(r -> r.getRowStatus() == TestDesignRow.RowStatus.BLOCKED).count());
-        counts.put("In Progress", testRows.stream().filter(r -> r.getRowStatus() == TestDesignRow.RowStatus.IN_PROGRESS).count());
-        counts.put("Not Started", testRows.stream().filter(r -> r.getRowStatus() == null
+        counts.put("Passed",        testRows.stream().filter(r -> r.getRowStatus() == TestDesignRow.RowStatus.PASSED).count());
+        counts.put("Failed",        testRows.stream().filter(r -> r.getRowStatus() == TestDesignRow.RowStatus.FAILED).count());
+        counts.put("Blocked",       testRows.stream().filter(r -> r.getRowStatus() == TestDesignRow.RowStatus.BLOCKED).count());
+        counts.put("In Progress",   testRows.stream().filter(r -> r.getRowStatus() == TestDesignRow.RowStatus.IN_PROGRESS).count());
+        counts.put("Not Started",   testRows.stream().filter(r -> r.getRowStatus() == null
                 || r.getRowStatus() == TestDesignRow.RowStatus.NOT_STARTED).count());
+        counts.put("N/A",           testRows.stream().filter(r -> r.getRowStatus() == TestDesignRow.RowStatus.NOT_APPLICABLE).count());
+        counts.put("Not Delivered", testRows.stream().filter(r -> r.getRowStatus() == TestDesignRow.RowStatus.NOT_DELIVERED).count());
         return counts.entrySet().stream()
                 .filter(e -> e.getValue() > 0)
                 .map(e -> ReportDTO.StatusCount.builder().status(e.getKey()).count(e.getValue()).build())
@@ -139,9 +144,12 @@ public class ReportService {
             long passed = dayRows.stream().filter(r -> r.getRowStatus() == TestDesignRow.RowStatus.PASSED).count();
             long failed = dayRows.stream().filter(r -> r.getRowStatus() == TestDesignRow.RowStatus.FAILED).count();
             long blocked = dayRows.stream().filter(r -> r.getRowStatus() == TestDesignRow.RowStatus.BLOCKED).count();
+            long notApplicable = dayRows.stream().filter(r -> r.getRowStatus() == TestDesignRow.RowStatus.NOT_APPLICABLE).count();
+            long notDelivered = dayRows.stream().filter(r -> r.getRowStatus() == TestDesignRow.RowStatus.NOT_DELIVERED).count();
             trend.add(ReportDTO.DailyActivity.builder()
                     .date(d.format(DATE_FMT))
                     .executed(executed).passed(passed).failed(failed).blocked(blocked)
+                    .notApplicable(notApplicable).notDelivered(notDelivered)
                     .build());
         }
         return trend;
@@ -187,10 +195,13 @@ public class ReportService {
                     long inProgress = rows.stream().filter(r -> r.getRowStatus() == TestDesignRow.RowStatus.IN_PROGRESS).count();
                     long notStarted = rows.stream().filter(r -> r.getRowStatus() == null
                             || r.getRowStatus() == TestDesignRow.RowStatus.NOT_STARTED).count();
+                    long notApplicable = rows.stream().filter(r -> r.getRowStatus() == TestDesignRow.RowStatus.NOT_APPLICABLE).count();
+                    long notDelivered = rows.stream().filter(r -> r.getRowStatus() == TestDesignRow.RowStatus.NOT_DELIVERED).count();
                     return ReportDTO.ChannelExecution.builder()
                             .channel(e.getKey()).total(total)
                             .passed(passed).failed(failed).blocked(blocked)
                             .inProgress(inProgress).notStarted(notStarted)
+                            .notApplicable(notApplicable).notDelivered(notDelivered)
                             .build();
                 }).collect(Collectors.toList());
     }
@@ -255,17 +266,28 @@ public class ReportService {
     }
 
     private List<ReportDTO.DefectRow> buildDefectRows(List<DefectRow> defectRows, DefectSheet sheet) {
-        String statusCol = sheet != null ? sheet.getStatusColumnName() : null;
+        String statusCol   = sheet != null ? sheet.getStatusColumnName()       : null;
         String detectedCol = sheet != null ? sheet.getDetectedDateColumnName() : null;
         String resolvedCol = sheet != null ? sheet.getResolvedDateColumnName() : null;
+
+        // Build a map of defectRow.id → linkedTestCount in one query
+        Map<Long, Long> blockedByDefectId = testDesignRowRepository.countLinkedTestsByDefectId()
+                .stream()
+                .collect(Collectors.toMap(
+                        row -> ((Number) row[0]).longValue(),
+                        row -> ((Number) row[1]).longValue()
+                ));
+
         return defectRows.stream().map(r -> {
             Map<String, String> data = parseRowData(r.getRowData());
+            long impacted = blockedByDefectId.getOrDefault(r.getId(), 0L);
             return ReportDTO.DefectRow.builder()
                     .defectId(r.getDefectId())
                     .summary(r.getSummary())
-                    .status(statusCol != null ? data.getOrDefault(statusCol, "") : null)
+                    .status(statusCol   != null ? data.getOrDefault(statusCol,   "") : null)
                     .detectedDate(detectedCol != null ? data.getOrDefault(detectedCol, "") : null)
                     .resolvedDate(resolvedCol != null ? data.getOrDefault(resolvedCol, "") : null)
+                    .impactedScenarios(impacted)
                     .allData(data)
                     .build();
         }).collect(Collectors.toList());
