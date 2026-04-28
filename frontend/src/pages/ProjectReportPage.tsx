@@ -113,9 +113,11 @@ export default function ProjectReportPage() {
   const [defectColWidths, setDefectColWidths] = useState<Record<string, number>>({});
   const defectResizeRef = useRef<{ col: string; startX: number; startWidth: number } | null>(null);
   const [showConfig, setShowConfig] = useState(false);
-  const [highlights, setHighlights] = useState<string>('');
-  const highlightsRef = useRef(highlights);
+  // contenteditable is the DOM source of truth — no React state needed
+  const highlightsRef = useRef<string>('');
   const highlightsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const highlightsEditorRef = useRef<HTMLDivElement>(null);
+  const highlightsSeeded = useRef(false);
 
   // Column resize for defect table
   useEffect(() => {
@@ -136,12 +138,19 @@ export default function ProjectReportPage() {
 
   const saveHighlights = (val: string) => {
     highlightsRef.current = val;
-    setHighlights(val);
     // Debounce: save to backend 1 s after the user stops typing
     if (highlightsSaveTimer.current) clearTimeout(highlightsSaveTimer.current);
     highlightsSaveTimer.current = setTimeout(() => {
       saveReportHighlights(id, val).catch(() => {/* silent */});
     }, 1000);
+  };
+
+  const applyFormat = (cmd: string) => {
+    highlightsEditorRef.current?.focus();
+    document.execCommand(cmd, false);
+    if (highlightsEditorRef.current) {
+      saveHighlights(highlightsEditorRef.current.innerHTML);
+    }
   };
 
   const { data, isLoading, isError, refetch } = useQuery<ProjectReportSummary>({
@@ -150,12 +159,18 @@ export default function ProjectReportPage() {
     enabled: !!id,
   });
 
-  // Initialise selected defect IDs to "Open" defects on first data load
-  // Seed highlights from backend when report data first loads
+  // Seed highlights from backend when report data first loads.
+  // Uses a ref flag so we never overwrite content the user has already typed,
+  // and we never call setState (which would trigger a re-render that could
+  // interfere with the just-set innerHTML).
   useEffect(() => {
-    if (data && highlightsRef.current === '') {
-      setHighlights(data.highlights ?? '');
-      highlightsRef.current = data.highlights ?? '';
+    if (data && !highlightsSeeded.current) {
+      highlightsSeeded.current = true;
+      const val = data.highlights ?? '';
+      highlightsRef.current = val;
+      if (highlightsEditorRef.current) {
+        highlightsEditorRef.current.innerHTML = val;
+      }
     }
   }, [data]);
 
@@ -207,30 +222,6 @@ export default function ProjectReportPage() {
     const paper = document.getElementById('report-paper');
     if (!paper) return;
     setIsExporting(true);
-
-    // html2canvas can't render textarea word-wrap correctly — replace it with
-    // a plain div carrying the same text and styles, then restore after capture.
-    const textarea = paper.querySelector<HTMLTextAreaElement>('textarea');
-    let highlightProxy: HTMLDivElement | null = null;
-    if (textarea) {
-      highlightProxy = document.createElement('div');
-      highlightProxy.textContent = textarea.value;
-      // Copy visual styles so the div looks identical in the snapshot
-      const cs = window.getComputedStyle(textarea);
-      highlightProxy.style.cssText = [
-        `font-size:${cs.fontSize}`,
-        `font-family:${cs.fontFamily}`,
-        `color:${cs.color}`,
-        `padding:${cs.padding}`,
-        `background:transparent`,
-        `white-space:pre-wrap`,
-        `word-break:break-word`,
-        `width:100%`,
-        `min-height:${cs.height}`,
-      ].join(';');
-      textarea.parentElement!.insertBefore(highlightProxy, textarea);
-      textarea.style.display = 'none';
-    }
 
     // Make all chart SVGs overflow-visible so outside-slice pie labels are captured
     const svgEls = Array.from(paper.querySelectorAll<SVGSVGElement>('svg'));
@@ -344,12 +335,6 @@ export default function ProjectReportPage() {
     } finally {
       svgEls.forEach((svg, i) => { svg.style.overflow = prevSvgOverflows[i]; });
       clippedEls.forEach((el, i) => { el.style.overflow = prevClippedOverflows[i]; });
-      if (highlightProxy) {
-        highlightProxy.remove();
-      }
-      if (textarea) {
-        textarea.style.display = '';
-      }
       setIsExporting(false);
     }
   };
@@ -428,13 +413,35 @@ export default function ProjectReportPage() {
           {/* Highlights & Risks */}
           {enabledSections.highlights && (
             <div className="border border-amber-200 bg-amber-50 rounded-lg" style={{ pageBreakInside: 'avoid' }}>
-              <WHeader icon={<AlertTriangle className="w-4 h-4 text-amber-500" />} title={SECTION_LABELS.highlights} />
-              <textarea
-                value={highlights}
-                onChange={e => saveHighlights(e.target.value)}
-                placeholder="Type highlights, blockers, and risks here… (auto-saved)"
-                className="w-full px-4 py-3 text-sm text-gray-700 bg-transparent resize-none focus:outline-none placeholder:text-amber-400 print:resize-none"
-                style={{ height: 80 }}
+              <div className="flex items-center justify-between border-b border-amber-200 px-3 py-1.5">
+                <div className="flex items-center gap-1.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-500" />
+                  <span className="text-xs font-semibold text-amber-700 uppercase tracking-wide">{SECTION_LABELS.highlights}</span>
+                </div>
+                {/* Formatting toolbar */}
+                <div className="flex items-center gap-1 print:hidden">
+                  <button onMouseDown={e => { e.preventDefault(); applyFormat('bold'); }}
+                    className="px-2 py-0.5 text-xs font-bold text-gray-600 hover:bg-amber-200 rounded transition-colors" title="Bold">B</button>
+                  <button onMouseDown={e => { e.preventDefault(); applyFormat('italic'); }}
+                    className="px-2 py-0.5 text-xs italic text-gray-600 hover:bg-amber-200 rounded transition-colors" title="Italic">I</button>
+                  <button onMouseDown={e => { e.preventDefault(); applyFormat('underline'); }}
+                    className="px-2 py-0.5 text-xs underline text-gray-600 hover:bg-amber-200 rounded transition-colors" title="Underline">U</button>
+                  <div className="w-px h-3 bg-amber-300 mx-0.5" />
+                  <button onMouseDown={e => { e.preventDefault(); applyFormat('insertUnorderedList'); }}
+                    className="px-2 py-0.5 text-xs text-gray-600 hover:bg-amber-200 rounded transition-colors" title="Bullet list">• —</button>
+                </div>
+              </div>
+              <div
+                ref={highlightsEditorRef}
+                contentEditable
+                suppressContentEditableWarning
+                onInput={() => {
+                  if (highlightsEditorRef.current) {
+                    saveHighlights(highlightsEditorRef.current.innerHTML);
+                  }
+                }}
+                data-placeholder="Type highlights, blockers, and risks here… (auto-saved)"
+                className="w-full px-4 py-3 text-sm text-gray-700 bg-transparent focus:outline-none min-h-[80px] empty:before:content-[attr(data-placeholder)] empty:before:text-amber-400 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5"
               />
             </div>
           )}
