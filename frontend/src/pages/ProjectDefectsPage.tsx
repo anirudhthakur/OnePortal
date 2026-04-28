@@ -557,6 +557,9 @@ export default function ProjectDefectsPage() {
                   </th>
                   );
                 })}
+                {isTesterOrOwner && (
+                  <th className="px-2 py-3 w-10" />
+                )}
                 <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap w-16">
                   Detail
                 </th>
@@ -710,18 +713,7 @@ export default function ProjectDefectsPage() {
                                   disabled={isSaving}
                                   className="w-full min-w-0 border-0 border-b border-transparent hover:border-gray-300 focus:border-rose-400 focus:outline-none bg-transparent text-sm py-0.5 transition-colors"
                                 />
-                                {hasPendingChanges && col === orderedColumns[orderedColumns.length - 1] && (
-                                  <button
-                                    onClick={() => saveRowChanges(row)}
-                                    disabled={isSaving}
-                                    className="shrink-0 p-1 bg-rose-600 hover:bg-rose-700 text-white rounded disabled:opacity-50"
-                                    title="Save changes"
-                                  >
-                                    {isSaving
-                                      ? <svg className="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" /></svg>
-                                      : <CheckCircle className="w-3 h-3" />}
-                                  </button>
-                                )}
+
                               </div>
                             ) : (
                               <span className="text-sm truncate block" title={row.data[col]}>{row.data[col] ?? ''}</span>
@@ -730,6 +722,23 @@ export default function ProjectDefectsPage() {
                         );
                       })}
 
+                      {/* Save row changes button */}
+                      {isTesterOrOwner && (
+                        <td className="px-2 py-2 bg-inherit w-10">
+                          {hasPendingChanges && (
+                            <button
+                              onClick={() => saveRowChanges(row)}
+                              disabled={isSaving}
+                              className="p-1 bg-rose-600 hover:bg-rose-700 text-white rounded disabled:opacity-50"
+                              title="Save changes"
+                            >
+                              {isSaving
+                                ? <svg className="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" /></svg>
+                                : <CheckCircle className="w-3 h-3" />}
+                            </button>
+                          )}
+                        </td>
+                      )}
                       {/* Row expand button */}
                       <td className="px-3 py-2 bg-inherit">
                         <button
@@ -866,3 +875,4 @@ export default function ProjectDefectsPage() {
     </div>
   );
 }
+
