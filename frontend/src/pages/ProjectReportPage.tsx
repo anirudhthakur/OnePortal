@@ -382,7 +382,7 @@ export default function ProjectReportPage() {
             <option value={14}>14</option>
             <option value={30}>30</option>
           </select>
-          <button onClick={() => refetch()}
+          <button onClick={() => { highlightsSeeded.current = false; setSelectedDefectIds(null); refetch(); }}
             className="flex items-center gap-1 px-3 py-1.5 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
             <RefreshCw className="w-4 h-4" /> Refresh
           </button>
