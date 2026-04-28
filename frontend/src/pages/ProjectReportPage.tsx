@@ -208,6 +208,30 @@ export default function ProjectReportPage() {
       scrollDiv.style.overflow = 'visible';
     }
 
+    // html2canvas can't render textarea word-wrap correctly — replace it with
+    // a plain div carrying the same text and styles, then restore after capture.
+    const textarea = paper.querySelector<HTMLTextAreaElement>('textarea');
+    let highlightProxy: HTMLDivElement | null = null;
+    if (textarea) {
+      highlightProxy = document.createElement('div');
+      highlightProxy.textContent = textarea.value;
+      // Copy visual styles so the div looks identical in the snapshot
+      const cs = window.getComputedStyle(textarea);
+      highlightProxy.style.cssText = [
+        `font-size:${cs.fontSize}`,
+        `font-family:${cs.fontFamily}`,
+        `color:${cs.color}`,
+        `padding:${cs.padding}`,
+        `background:transparent`,
+        `white-space:pre-wrap`,
+        `word-break:break-word`,
+        `width:100%`,
+        `min-height:${cs.height}`,
+      ].join(';');
+      textarea.parentElement!.insertBefore(highlightProxy, textarea);
+      textarea.style.display = 'none';
+    }
+
     try {
       // Wait one frame for DOM reflow
       await new Promise(r => requestAnimationFrame(r));
@@ -291,6 +315,15 @@ export default function ProjectReportPage() {
       if (scrollDiv) {
         scrollDiv.style.maxHeight = prevMaxH;
         scrollDiv.style.overflow  = prevOverflow;
+      }
+      if (textarea) {
+        textarea.style.height = prevTextareaH;
+      }
+      if (highlightProxy) {
+        highlightProxy.remove();
+      }
+      if (textarea) {
+        textarea.style.display = '';
       }
       setIsExporting(false);
     }

@@ -210,6 +210,7 @@ public class DefectService {
                         .rowIndex(row.getRowIndex())
                         .defectId(row.getDefectId())
                         .summary(row.getSummary())
+                        .comments(row.getComments())
                         .data(map)
                         .updatedAt(row.getUpdatedAt())
                         .updatedByUsername(row.getUpdatedBy() != null ? row.getUpdatedBy().getUsername() : null)
@@ -276,6 +277,9 @@ public class DefectService {
         if (request.getSummary() != null) {
             row.setSummary(request.getSummary());
         }
+        if (request.getComments() != null) {
+            row.setComments(request.getComments());
+        }
         row.setUpdatedAt(LocalDateTime.now());
         row.setUpdatedBy(requester);
 
@@ -289,6 +293,7 @@ public class DefectService {
                     .rowIndex(row.getRowIndex())
                     .defectId(row.getDefectId())
                     .summary(row.getSummary())
+                    .comments(row.getComments())
                     .data(map)
                     .updatedAt(row.getUpdatedAt())
                     .updatedByUsername(row.getUpdatedBy() != null ? row.getUpdatedBy().getUsername() : null)
@@ -340,6 +345,7 @@ public class DefectService {
                     .rowIndex(newRow.getRowIndex())
                     .defectId(newRow.getDefectId())
                     .summary(newRow.getSummary())
+                    .comments(newRow.getComments())
                     .data(blankMap)
                     .updatedAt(newRow.getUpdatedAt())
                     .updatedByUsername(newRow.getUpdatedBy() != null ? newRow.getUpdatedBy().getUsername() : null)

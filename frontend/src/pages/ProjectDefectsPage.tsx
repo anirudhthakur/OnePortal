@@ -64,6 +64,8 @@ export default function ProjectDefectsPage() {
   // CRUD state
   const [pendingCells, setPendingCells] = useState<Record<number, Record<string, string>>>({});
   const [savingRows, setSavingRows] = useState<Set<number>>(new Set());
+  const [pendingComments, setPendingComments] = useState<Record<number, string>>({});
+  const [savingComments, setSavingComments] = useState<Set<number>>(new Set());
   const [deleteConfirmRow, setDeleteConfirmRow] = useState<DefectRowResponse | null>(null);
 
   // Detail panel
@@ -72,6 +74,11 @@ export default function ProjectDefectsPage() {
   // Column resize state
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
   const resizeRef = useRef<{ col: string; startX: number; startWidth: number } | null>(null);
+
+  // Column reorder state
+  const [columnOrder, setColumnOrder] = useState<string[]>([]);
+  const [dragOverCol, setDragOverCol] = useState<string | null>(null);
+  const dragColRef = useRef<string | null>(null);
 
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
@@ -131,6 +138,31 @@ export default function ProjectDefectsPage() {
   const myMembership = members.find((m: ProjectMember) => m.userId === currentUser?.id);
   const myRole: ProjectRole | null = myMembership?.role ?? null;
   const isTesterOrOwner = myRole === 'OWNER' || myRole === 'TESTER';
+
+  // Seed column order when a new sheet is loaded; preserve user's reordering on re-renders
+  useEffect(() => {
+    if (defectPage?.columns?.length) {
+      setColumnOrder(prev => {
+        const incoming = [...defectPage.columns, '__comments__', '__linked__'];
+        const known = new Set(prev);
+        const extra = incoming.filter(c => !known.has(c));
+        const pruned = prev.filter(c => incoming.includes(c));
+        return [...pruned, ...extra];
+      });
+    }
+  }, [defectPage?.sheetId]);
+
+  // Columns in user-defined order (falls back to server order on first load)
+  const orderedColumns = useMemo(() => {
+    if (!defectPage?.columns?.length) return [];
+    const allCols = [...defectPage.columns, '__comments__', '__linked__'];
+    if (!columnOrder.length) return allCols;
+    const set = new Set(allCols);
+    return [
+      ...columnOrder.filter(c => set.has(c)),
+      ...allCols.filter(c => !columnOrder.includes(c)),
+    ];
+  }, [columnOrder, defectPage?.columns]);
 
   const uniqueColValues: Record<string, string[]> = useMemo(() => {
     if (!defectPage) return {};
@@ -238,6 +270,22 @@ export default function ProjectDefectsPage() {
       alert(err instanceof Error ? err.message : 'Failed to save');
     } finally {
       setSavingRows(prev => { const n = new Set(prev); n.delete(row.rowId); return n; });
+    }
+  };
+
+  const saveComment = async (row: DefectRowResponse) => {
+    if (!currentUser || !sheetSummary) return;
+    const comment = pendingComments[row.rowId];
+    if (comment === undefined) return;
+    setSavingComments(prev => new Set(prev).add(row.rowId));
+    try {
+      await updateDefectRow(sheetSummary.sheetId, row.rowId, currentUser.id, { comments: comment });
+      queryClient.invalidateQueries({ queryKey: ['defectRows', sheetSummary.sheetId] });
+      setPendingComments(prev => { const n = { ...prev }; delete n[row.rowId]; return n; });
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Failed to save comment');
+    } finally {
+      setSavingComments(prev => { const n = new Set(prev); n.delete(row.rowId); return n; });
     }
   };
 
@@ -425,15 +473,75 @@ export default function ProjectDefectsPage() {
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
                 <th className="sticky left-0 z-10 bg-gray-50 px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-10">#</th>
-                {(defectPage?.columns ?? []).map((col: string) => (
+                {orderedColumns.map((col: string) => {
+                  const dragProps = {
+                    draggable: true,
+                    onDragStart: () => { dragColRef.current = col; },
+                    onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOverCol(col); },
+                    onDragLeave: () => setDragOverCol(null),
+                    onDrop: () => {
+                      setDragOverCol(null);
+                      if (!dragColRef.current || dragColRef.current === col) return;
+                      const cols = [...orderedColumns];
+                      const from = cols.indexOf(dragColRef.current!);
+                      const to = cols.indexOf(col);
+                      if (from === -1 || to === -1) return;
+                      cols.splice(from, 1);
+                      cols.splice(to, 0, dragColRef.current!);
+                      setColumnOrder(cols);
+                      dragColRef.current = null;
+                    },
+                  };
+                  const dropHighlight = dragOverCol === col ? 'border-l-2 border-rose-400 bg-rose-100' : '';
+
+                  if (col === '__comments__') return (
+                    <th key={col} {...dragProps}
+                      style={{ width: colWidths['__comments__'], minWidth: colWidths['__comments__'] ?? 160, position: 'relative' }}
+                      className={`px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide bg-amber-50 cursor-grab select-none ${dropHighlight}`}>
+                      Comments
+                      <div draggable={false}
+                        className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-amber-400 transition-colors z-20"
+                        onMouseDown={(e) => {
+                          e.stopPropagation(); e.preventDefault();
+                          const th = e.currentTarget.closest('th') as HTMLElement;
+                          resizeRef.current = { col: '__comments__', startX: e.clientX, startWidth: colWidths['__comments__'] ?? th.getBoundingClientRect().width };
+                        }} />
+                    </th>
+                  );
+
+                  if (col === '__linked__') return (
+                    <th key={col} {...dragProps}
+                      className={`px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap bg-rose-50 min-w-24 cursor-grab select-none ${dropHighlight}`}>
+                      Linked Tests
+                    </th>
+                  );
+
+                  return (
                   <th
                     key={col}
+                    draggable
+                    onDragStart={() => { dragColRef.current = col; }}
+                    onDragOver={e => { e.preventDefault(); setDragOverCol(col); }}
+                    onDragLeave={() => setDragOverCol(null)}
+                    onDrop={() => {
+                      setDragOverCol(null);
+                      if (!dragColRef.current || dragColRef.current === col) return;
+                      const cols = [...orderedColumns];
+                      const from = cols.indexOf(dragColRef.current!);
+                      const to = cols.indexOf(col);
+                      if (from === -1 || to === -1) return;
+                      cols.splice(from, 1);
+                      cols.splice(to, 0, dragColRef.current!);
+                      setColumnOrder(cols);
+                      dragColRef.current = null;
+                    }}
                     style={{ width: colWidths[col], minWidth: colWidths[col] ?? 80 }}
-                    className="relative px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-100 transition-colors select-none"
+                    className={`relative px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-grab hover:bg-gray-100 transition-colors select-none ${dragOverCol === col ? 'bg-rose-100 border-l-2 border-rose-400' : ''}`}
                     onClick={() => handleSort(col)}
                   >
                     <div className="flex items-center gap-1 pr-2">{col}<SortIcon col={col} /></div>
                     <div
+                      draggable={false}
                       className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-rose-400 transition-colors z-20"
                       onMouseDown={(e) => {
                         e.stopPropagation();
@@ -447,10 +555,8 @@ export default function ProjectDefectsPage() {
                       }}
                     />
                   </th>
-                ))}
-                <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap bg-rose-50 min-w-24">
-                  Linked Tests
-                </th>
+                  );
+                })}
                 <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap w-16">
                   Detail
                 </th>
@@ -458,31 +564,34 @@ export default function ProjectDefectsPage() {
               {/* Column filter row */}
               <tr className="bg-white border-b border-gray-100">
                 <th className="sticky left-0 z-10 bg-white px-2 py-1" />
-                {(defectPage?.columns ?? []).map((col: string) => (
-                  <th key={col} style={{ width: colWidths[col], minWidth: colWidths[col] ?? 80 }} className="px-2 py-1">
-                    <select
-                      value={columnFilters[col] ?? ''}
-                      onChange={(e) => {
-                        setColumnFilters(prev => ({ ...prev, [col]: e.target.value }));
-                        setPage(0);
-                      }}
-                      className="w-full min-w-20 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-rose-400 focus:border-rose-400 bg-white"
-                    >
-                      <option value="">All</option>
-                      {(uniqueColValues[col] ?? []).map(v => (
-                        <option key={v} value={v}>{v}</option>
-                      ))}
-                    </select>
-                  </th>
-                ))}
-                <th className="px-2 py-1" />
+                {orderedColumns.map((col: string) => {
+                  if (col === '__comments__') return <th key={col} className="px-2 py-1 bg-amber-50/50" />;
+                  if (col === '__linked__')   return <th key={col} className="px-2 py-1 bg-rose-50/50" />;
+                  return (
+                    <th key={col} style={{ width: colWidths[col], minWidth: colWidths[col] ?? 80 }} className="px-2 py-1">
+                      <select
+                        value={columnFilters[col] ?? ''}
+                        onChange={(e) => {
+                          setColumnFilters(prev => ({ ...prev, [col]: e.target.value }));
+                          setPage(0);
+                        }}
+                        className="w-full min-w-20 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-rose-400 focus:border-rose-400 bg-white"
+                      >
+                        <option value="">All</option>
+                        {(uniqueColValues[col] ?? []).map(v => (
+                          <option key={v} value={v}>{v}</option>
+                        ))}
+                      </select>
+                    </th>
+                  );
+                })}
                 <th className="px-2 py-1" />
               </tr>
             </thead>
             <tbody>
               {pageRows.length === 0 ? (
                 <tr>
-                  <td colSpan={(defectPage?.columns.length ?? 0) + 3} className="text-center py-12 text-gray-400">
+                  <td colSpan={(defectPage?.columns.length ?? 0) + 4} className="text-center py-12 text-gray-400">
                     No defects match your search
                   </td>
                 </tr>
@@ -528,7 +637,61 @@ export default function ProjectDefectsPage() {
                       </td>
 
                       {/* Data cells */}
-                      {(defectPage?.columns ?? []).map((col: string) => {
+                      {orderedColumns.map((col: string) => {
+                        // ── Comments virtual column ──────────────────────────
+                        if (col === '__comments__') return (
+                          <td key={col} style={{ width: colWidths['__comments__'], maxWidth: colWidths['__comments__'] ?? undefined }}
+                            className="px-2 py-1.5 bg-amber-50/30 align-top">
+                            {isTesterOrOwner ? (
+                              <div className="flex flex-col gap-1">
+                                <textarea
+                                  value={pendingComments[row.rowId] !== undefined ? pendingComments[row.rowId] : (row.comments ?? '')}
+                                  onChange={e => {
+                                    setPendingComments(prev => ({ ...prev, [row.rowId]: e.target.value }));
+                                    e.target.style.height = 'auto';
+                                    e.target.style.height = `${e.target.scrollHeight}px`;
+                                  }}
+                                  onFocus={e => {
+                                    e.target.style.height = 'auto';
+                                    e.target.style.height = `${e.target.scrollHeight}px`;
+                                  }}
+                                  disabled={savingComments.has(row.rowId)}
+                                  placeholder="Add comment…"
+                                  rows={1}
+                                  className="w-full border border-transparent hover:border-amber-300 focus:border-amber-400 focus:outline-none bg-transparent text-xs resize-none overflow-hidden rounded px-1 py-0.5 placeholder:text-amber-300 transition-colors"
+                                />
+                                {pendingComments[row.rowId] !== undefined && (
+                                  <button onClick={() => saveComment(row)} disabled={savingComments.has(row.rowId)}
+                                    className="self-end px-2 py-0.5 text-xs bg-amber-500 hover:bg-amber-600 text-white rounded disabled:opacity-50">
+                                    {savingComments.has(row.rowId) ? 'Saving…' : 'Save'}
+                                  </button>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-xs text-gray-600 whitespace-pre-wrap">{row.comments ?? ''}</span>
+                            )}
+                          </td>
+                        );
+
+                        // ── Linked Tests virtual column ───────────────────────
+                        if (col === '__linked__') {
+                          const count = linkedTestCounts[row.rowId] ?? 0;
+                          return (
+                            <td key={col} className="px-3 py-2 bg-inherit min-w-24">
+                              {count > 0 ? (
+                                <Link to={`/projects/${id}/test-cases?defectRowId=${row.rowId}`}
+                                  className="inline-flex items-center gap-1 text-xs font-medium bg-indigo-100 text-indigo-700 hover:bg-indigo-200 px-2 py-0.5 rounded-full transition-colors"
+                                  title={`${count} test case${count !== 1 ? 's' : ''} linked to this defect`}>
+                                  <FlaskConical className="w-3 h-3" /> {count} test{count !== 1 ? 's' : ''}
+                                </Link>
+                              ) : (
+                                <span className="text-xs text-gray-400">—</span>
+                              )}
+                            </td>
+                          );
+                        }
+
+                        // ── Regular data column ───────────────────────────────
                         const currentVal = rowCellEdits[col] !== undefined ? rowCellEdits[col] : (row.data[col] ?? '');
                         return (
                           <td key={col} style={{ width: colWidths[col], maxWidth: colWidths[col] ?? undefined }} className="px-2 py-1.5 text-gray-700 overflow-hidden">
@@ -547,7 +710,7 @@ export default function ProjectDefectsPage() {
                                   disabled={isSaving}
                                   className="w-full min-w-0 border-0 border-b border-transparent hover:border-gray-300 focus:border-rose-400 focus:outline-none bg-transparent text-sm py-0.5 transition-colors"
                                 />
-                                {hasPendingChanges && col === defectPage?.columns[defectPage.columns.length - 1] && (
+                                {hasPendingChanges && col === orderedColumns[orderedColumns.length - 1] && (
                                   <button
                                     onClick={() => saveRowChanges(row)}
                                     disabled={isSaving}
@@ -566,29 +729,6 @@ export default function ProjectDefectsPage() {
                           </td>
                         );
                       })}
-
-                      {/* Save button in last non-data column if tester/owner */}
-                      {isTesterOrOwner && hasPendingChanges && (
-                        <td className="px-2 py-1.5 bg-rose-50 min-w-24 text-center" />
-                      )}
-
-                      {/* Linked Tests */}
-                      <td className="px-3 py-2 bg-inherit min-w-24">
-                        {(() => {
-                          const count = linkedTestCounts[row.rowId] ?? 0;
-                          return count > 0 ? (
-                            <Link
-                              to={`/projects/${id}/test-cases?defectRowId=${row.rowId}`}
-                              className="inline-flex items-center gap-1 text-xs font-medium bg-indigo-100 text-indigo-700 hover:bg-indigo-200 px-2 py-0.5 rounded-full transition-colors"
-                              title={`${count} test case${count !== 1 ? 's' : ''} linked to this defect`}
-                            >
-                              <FlaskConical className="w-3 h-3" /> {count} test{count !== 1 ? 's' : ''}
-                            </Link>
-                          ) : (
-                            <span className="text-xs text-gray-400">—</span>
-                          );
-                        })()}
-                      </td>
 
                       {/* Row expand button */}
                       <td className="px-3 py-2 bg-inherit">

@@ -280,6 +280,11 @@ public class ReportService {
 
         return defectRows.stream().map(r -> {
             Map<String, String> data = parseRowData(r.getRowData());
+            // Inject comments as a virtual column so it appears in the report table
+            if (r.getComments() != null && !r.getComments().isBlank()) {
+                data = new LinkedHashMap<>(data);
+                data.put("Comments", r.getComments());
+            }
             long impacted = blockedByDefectId.getOrDefault(r.getId(), 0L);
             return ReportDTO.DefectRow.builder()
                     .defectId(r.getDefectId())
@@ -295,7 +300,10 @@ public class ReportService {
 
     private List<String> extractDefectColumns(List<DefectRow> defectRows) {
         if (defectRows.isEmpty()) return Collections.emptyList();
-        return new ArrayList<>(parseRowData(defectRows.get(0).getRowData()).keySet());
+        List<String> cols = new ArrayList<>(parseRowData(defectRows.get(0).getRowData()).keySet());
+        boolean anyComments = defectRows.stream().anyMatch(r -> r.getComments() != null && !r.getComments().isBlank());
+        if (anyComments && !cols.contains("Comments")) cols.add("Comments");
+        return cols;
     }
 
     private Map<String, String> parseRowData(String json) {

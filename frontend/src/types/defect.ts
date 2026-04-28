@@ -23,6 +23,7 @@ export interface DefectRowResponse {
   rowIndex: number;
   defectId: string;
   summary: string | null;
+  comments: string | null;
   data: Record<string, string>;
   updatedAt: string | null;
   updatedByUsername: string | null;
@@ -47,4 +48,5 @@ export interface UpdateDefectRowRequest {
   rowData?: Record<string, string>;
   defectId?: string;
   summary?: string;
+  comments?: string;
 }
