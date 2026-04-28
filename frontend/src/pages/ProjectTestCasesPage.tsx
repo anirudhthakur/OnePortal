@@ -136,6 +136,11 @@ export default function ProjectTestCasesPage() {
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
   const resizeRef = useRef<{ col: string; startX: number; startWidth: number } | null>(null);
 
+  // Column reorder state
+  const [columnOrder, setColumnOrder] = useState<string[]>([]);
+  const [dragOverCol, setDragOverCol] = useState<string | null>(null);
+  const dragColRef = useRef<string | null>(null);
+
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
       if (!resizeRef.current) return;
@@ -188,6 +193,28 @@ export default function ProjectTestCasesPage() {
     ),
     [sheet?.columns]
   );
+
+  // Seed column order when a new sheet is loaded
+  useEffect(() => {
+    if (displayColumns.length) {
+      setColumnOrder(prev => {
+        const known = new Set(prev);
+        const extra = displayColumns.filter(c => !known.has(c));
+        const pruned = prev.filter(c => displayColumns.includes(c));
+        return [...pruned, ...extra];
+      });
+    }
+  }, [sheet?.sheetId]);
+
+  // Columns in user-defined drag order (falls back to server order on first load)
+  const orderedDisplayColumns = useMemo(() => {
+    if (!displayColumns.length) return [];
+    if (!columnOrder.length) return displayColumns;
+    return [
+      ...columnOrder.filter(c => displayColumns.includes(c)),
+      ...displayColumns.filter(c => !columnOrder.includes(c)),
+    ];
+  }, [columnOrder, displayColumns]);
 
   const uniqueColValues: Record<string, string[]> = useMemo(() => {
     if (!sheet) return {};
@@ -655,15 +682,32 @@ export default function ProjectTestCasesPage() {
                     </th>
                   )}
                   <th className="sticky left-0 z-10 bg-gray-50 px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-10">#</th>
-                  {displayColumns.map((col: string) => (
+                  {orderedDisplayColumns.map((col: string) => (
                     <th
                       key={col}
+                      draggable
+                      onDragStart={() => { dragColRef.current = col; }}
+                      onDragOver={e => { e.preventDefault(); setDragOverCol(col); }}
+                      onDragLeave={() => setDragOverCol(null)}
+                      onDrop={() => {
+                        setDragOverCol(null);
+                        if (!dragColRef.current || dragColRef.current === col) return;
+                        const cols = [...orderedDisplayColumns];
+                        const from = cols.indexOf(dragColRef.current!);
+                        const to = cols.indexOf(col);
+                        if (from === -1 || to === -1) return;
+                        cols.splice(from, 1);
+                        cols.splice(to, 0, dragColRef.current!);
+                        setColumnOrder(cols);
+                        dragColRef.current = null;
+                      }}
                       style={{ width: colWidths[col], minWidth: colWidths[col] ?? 80 }}
-                      className="relative px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-100 transition-colors select-none"
+                      className={`relative px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-grab hover:bg-gray-100 transition-colors select-none ${dragOverCol === col ? 'bg-indigo-100 border-l-2 border-indigo-400' : ''}`}
                       onClick={() => handleSort(col)}
                     >
                       <div className="flex items-center gap-1 pr-2">{col}<SortIcon col={col} /></div>
                       <div
+                        draggable={false}
                         className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-indigo-400 transition-colors z-20"
                         onMouseDown={(e) => {
                           e.stopPropagation();
@@ -698,7 +742,7 @@ export default function ProjectTestCasesPage() {
                 <tr className="bg-white border-b border-gray-100">
                   {isTesterOrOwner && <th className="sticky left-0 z-10 bg-white px-2 py-1" />}
                   <th className="sticky left-0 z-10 bg-white px-2 py-1" />
-                  {displayColumns.map((col: string) => (
+                  {orderedDisplayColumns.map((col: string) => (
                     <th key={col} style={{ width: colWidths[col], minWidth: colWidths[col] ?? 80 }} className="px-2 py-1">
                       <select
                         value={columnFilters[col] ?? ''}
@@ -769,7 +813,7 @@ export default function ProjectTestCasesPage() {
               <tbody>
                 {pageRows.length === 0 ? (
                   <tr>
-                    <td colSpan={displayColumns.length + 5 + (defectDropdown.length > 0 ? 1 : 0) + (isTesterOrOwner ? 1 : 0)} className="text-center py-12 text-gray-400">
+                    <td colSpan={orderedDisplayColumns.length + 5 + (defectDropdown.length > 0 ? 1 : 0) + (isTesterOrOwner ? 1 : 0)} className="text-center py-12 text-gray-400">
                       No rows match your search
                     </td>
                   </tr>
@@ -842,7 +886,7 @@ export default function ProjectTestCasesPage() {
                         </td>
 
                         {/* Data cells */}
-                        {displayColumns.map((col: string) => {
+                        {orderedDisplayColumns.map((col: string) => {
                           const currentVal = rowCellEdits[col] !== undefined ? rowCellEdits[col] : (row.data[col] ?? '');
                           return (
                             <td key={col} style={{ width: colWidths[col], maxWidth: colWidths[col] ?? undefined }} className="px-2 py-1.5 text-gray-700 overflow-hidden">
