@@ -63,6 +63,7 @@ export interface DefectReportRow {
 export interface ProjectReportSummary {
   projectName: string;
   generatedAt: string;
+  highlights: string;
   executionSummary: ExecutionSummary;
   executionByStatus: StatusCount[];
   dailyTrend: DailyActivity[];
@@ -83,4 +84,11 @@ export const getProjectReportSummary = async (
     { params: { trendDays } },
   );
   return data;
+};
+
+export const saveReportHighlights = async (
+  projectId: number,
+  highlights: string,
+): Promise<void> => {
+  await api.patch(`/api/v1/reports/project/${projectId}/highlights`, { highlights });
 };

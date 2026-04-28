@@ -62,6 +62,7 @@ public class ReportService {
         return ReportDTO.ProjectReportSummary.builder()
                 .projectName(project.getName())
                 .generatedAt(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")))
+                .highlights(project.getReportHighlights() != null ? project.getReportHighlights() : "")
                 .executionSummary(execSummary)
                 .executionByStatus(executionByStatus)
                 .dailyTrend(dailyTrend)
@@ -72,6 +73,14 @@ public class ReportService {
                 .defects(defects)
                 .defectColumns(defectColumns)
                 .build();
+    }
+
+    @Transactional
+    public void saveHighlights(Long projectId, String highlights) {
+        Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new ResourceNotFoundException("Project", projectId));
+        project.setReportHighlights(highlights);
+        projectRepository.save(project);
     }
 
     private ReportDTO.ExecutionSummary buildExecutionSummary(List<TestDesignRow> testRows, Long projectId) {

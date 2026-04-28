@@ -8,6 +8,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Map;
+
 @RestController
 @RequestMapping("/api/v1/reports")
 @RequiredArgsConstructor
@@ -22,5 +24,14 @@ public class ReportController {
             @PathVariable Long projectId,
             @RequestParam(defaultValue = "14") int trendDays) {
         return ResponseEntity.ok(reportService.getProjectReport(projectId, trendDays));
+    }
+
+    @Operation(summary = "Save highlights & risks text for a project report")
+    @PatchMapping("/project/{projectId}/highlights")
+    public ResponseEntity<Void> saveHighlights(
+            @PathVariable Long projectId,
+            @RequestBody Map<String, String> body) {
+        reportService.saveHighlights(projectId, body.getOrDefault("highlights", ""));
+        return ResponseEntity.noContent().build();
     }
 }

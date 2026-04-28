@@ -7,7 +7,7 @@ import {
 } from 'recharts';
 import html2canvas from 'html2canvas-pro';
 import jsPDF from 'jspdf';
-import { getProjectReportSummary } from '../api/reportApi';
+import { getProjectReportSummary, saveReportHighlights } from '../api/reportApi';
 import type { ProjectReportSummary } from '../api/reportApi';
 import {
   ArrowLeft, Settings, X, CheckSquare, Square,
@@ -93,8 +93,6 @@ const HEADER_H = 38;
 /** Virtual column that shows the blocked-test-case count per defect */
 const IMPACTED_COL = 'Impacted Scenarios';
 
-const HIGHLIGHTS_KEY = (pid: number) => `report_highlights_${pid}`;
-
 // ─── component ───────────────────────────────────────────────────────────────
 
 export default function ProjectReportPage() {
@@ -115,10 +113,9 @@ export default function ProjectReportPage() {
   const [defectColWidths, setDefectColWidths] = useState<Record<string, number>>({});
   const defectResizeRef = useRef<{ col: string; startX: number; startWidth: number } | null>(null);
   const [showConfig, setShowConfig] = useState(false);
-  const [highlights, setHighlights] = useState<string>(() => {
-    try { return localStorage.getItem(HIGHLIGHTS_KEY(id)) ?? ''; } catch { return ''; }
-  });
+  const [highlights, setHighlights] = useState<string>('');
   const highlightsRef = useRef(highlights);
+  const highlightsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Column resize for defect table
   useEffect(() => {
@@ -140,7 +137,11 @@ export default function ProjectReportPage() {
   const saveHighlights = (val: string) => {
     highlightsRef.current = val;
     setHighlights(val);
-    try { localStorage.setItem(HIGHLIGHTS_KEY(id), val); } catch { /* ignore */ }
+    // Debounce: save to backend 1 s after the user stops typing
+    if (highlightsSaveTimer.current) clearTimeout(highlightsSaveTimer.current);
+    highlightsSaveTimer.current = setTimeout(() => {
+      saveReportHighlights(id, val).catch(() => {/* silent */});
+    }, 1000);
   };
 
   const { data, isLoading, isError, refetch } = useQuery<ProjectReportSummary>({
@@ -150,6 +151,14 @@ export default function ProjectReportPage() {
   });
 
   // Initialise selected defect IDs to "Open" defects on first data load
+  // Seed highlights from backend when report data first loads
+  useEffect(() => {
+    if (data && highlightsRef.current === '') {
+      setHighlights(data.highlights ?? '');
+      highlightsRef.current = data.highlights ?? '';
+    }
+  }, [data]);
+
   useEffect(() => {
     if (data && selectedDefectIds === null) {
       setSelectedDefectIds(new Set(
@@ -199,15 +208,6 @@ export default function ProjectReportPage() {
     if (!paper) return;
     setIsExporting(true);
 
-    // Expand defect table so all rows are captured (no scroll clipping)
-    const scrollDiv = paper.querySelector<HTMLElement>('.overflow-auto');
-    const prevMaxH = scrollDiv?.style.maxHeight ?? '';
-    const prevOverflow = scrollDiv?.style.overflow ?? '';
-    if (scrollDiv) {
-      scrollDiv.style.maxHeight = 'none';
-      scrollDiv.style.overflow = 'visible';
-    }
-
     // html2canvas can't render textarea word-wrap correctly — replace it with
     // a plain div carrying the same text and styles, then restore after capture.
     const textarea = paper.querySelector<HTMLTextAreaElement>('textarea');
@@ -232,6 +232,24 @@ export default function ProjectReportPage() {
       textarea.style.display = 'none';
     }
 
+    // Make all chart SVGs overflow-visible so outside-slice pie labels are captured
+    const svgEls = Array.from(paper.querySelectorAll<SVGSVGElement>('svg'));
+    const prevSvgOverflows = svgEls.map(svg => svg.style.overflow);
+    svgEls.forEach(svg => { svg.style.overflow = 'visible'; });
+
+    // Also un-clip every container div/section so pie labels aren't cut by parent overflow:hidden
+    const allEls = Array.from(paper.querySelectorAll<HTMLElement>('*'));
+    const clippedEls: HTMLElement[] = [];
+    const prevClippedOverflows: string[] = [];
+    allEls.forEach(el => {
+      const computed = window.getComputedStyle(el).overflow;
+      if (computed === 'hidden' || computed === 'clip') {
+        clippedEls.push(el);
+        prevClippedOverflows.push(el.style.overflow);
+        el.style.overflow = 'visible';
+      }
+    });
+
     try {
       // Wait one frame for DOM reflow
       await new Promise(r => requestAnimationFrame(r));
@@ -252,6 +270,18 @@ export default function ProjectReportPage() {
           });
         });
       }
+
+      // Also add every defect table row as a break-avoidance unit so page
+      // breaks never slice through the middle of a row
+      paper.querySelectorAll<HTMLElement>('table tbody tr').forEach(tr => {
+        const r = tr.getBoundingClientRect();
+        sectionRanges.push({
+          top:    (r.top    - paperRect.top) * SCALE,
+          bottom: (r.bottom - paperRect.top) * SCALE,
+        });
+      });
+      // Sort all ranges by top so the find() scan is stable
+      sectionRanges.sort((a, b) => a.top - b.top);
 
       const canvas = await html2canvas(paper, {
         scale: SCALE,
@@ -278,15 +308,15 @@ export default function ProjectReportPage() {
         let pageEnd = idealEnd;
 
         if (idealEnd < imgH) {
-          // Find the first section whose top is inside this page but whose
-          // bottom would overflow onto the next page — move the cut to just
-          // before that section starts.
+          // Find the first range (section OR table row) whose top is inside
+          // this page but whose bottom would overflow — move the cut to just
+          // before that element starts.
           const wouldBeCut = sectionRanges.find(
             s => s.top > pos && s.top < idealEnd && s.bottom > idealEnd
           );
-          if (wouldBeCut && wouldBeCut.top - pos > pageHpx * 0.15) {
-            // Only move the cut if the gap before the section is more than 15%
-            // of a page height — avoids infinite loops for oversized sections
+          if (wouldBeCut && wouldBeCut.top - pos > pageHpx * 0.05) {
+            // Only move the cut if there is at least 5% of a page above the
+            // element — avoids infinite loops for elements taller than a page
             pageEnd = wouldBeCut.top;
           }
         }
@@ -312,13 +342,8 @@ export default function ProjectReportPage() {
       const dateStr = new Date().toISOString().split('T')[0];
       pdf.save(`${data?.projectName ?? 'report'}-${dateStr}.pdf`);
     } finally {
-      if (scrollDiv) {
-        scrollDiv.style.maxHeight = prevMaxH;
-        scrollDiv.style.overflow  = prevOverflow;
-      }
-      if (textarea) {
-        textarea.style.height = prevTextareaH;
-      }
+      svgEls.forEach((svg, i) => { svg.style.overflow = prevSvgOverflows[i]; });
+      clippedEls.forEach((el, i) => { el.style.overflow = prevClippedOverflows[i]; });
       if (highlightProxy) {
         highlightProxy.remove();
       }
@@ -402,7 +427,7 @@ export default function ProjectReportPage() {
 
           {/* Highlights & Risks */}
           {enabledSections.highlights && (
-            <div className="border border-amber-200 bg-amber-50 rounded-lg overflow-hidden" style={{ pageBreakInside: 'avoid' }}>
+            <div className="border border-amber-200 bg-amber-50 rounded-lg" style={{ pageBreakInside: 'avoid' }}>
               <WHeader icon={<AlertTriangle className="w-4 h-4 text-amber-500" />} title={SECTION_LABELS.highlights} />
               <textarea
                 value={highlights}
@@ -416,7 +441,7 @@ export default function ProjectReportPage() {
 
           {/* Execution Summary */}
           {enabledSections.summary && (
-            <div className="border border-gray-200 rounded-lg overflow-hidden" style={{ pageBreakInside: 'avoid' }}>
+            <div className="border border-gray-200 rounded-lg" style={{ pageBreakInside: 'avoid' }}>
               <WHeader icon={<Activity className="w-4 h-4 text-indigo-500" />} title={SECTION_LABELS.summary} />
               <div className="grid grid-cols-4 gap-3 p-4">
                 <StatCard label="Total Tests"    value={exec.total}         color="text-gray-800" />
@@ -437,11 +462,11 @@ export default function ProjectReportPage() {
           {execRowCount > 0 && (
             <div style={{ display: 'grid', gridTemplateColumns: `repeat(${execRowCount}, 1fr)`, gap: 12, pageBreakInside: 'avoid' }}>
               {enabledSections.executionPie && (
-                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <div className="border border-gray-200 rounded-lg">
                   <WHeader icon={<Activity className="w-4 h-4 text-green-500" />} title={SECTION_LABELS.executionPie} />
                   <div style={{ height: CHART_H }}>
                     <ResponsiveContainer width="100%" height="100%">
-                      <PieChart margin={{ top: 18, right: 18, bottom: 0, left: 18 }}>
+                      <PieChart margin={{ top: 28, right: 28, bottom: 0, left: 28 }}>
                         <Pie data={executionByStatus} dataKey="count" nameKey="status"
                           cx="50%" cy="50%" outerRadius={65}
                           label={renderPieOutsideLabel} labelLine={false}>
@@ -457,7 +482,7 @@ export default function ProjectReportPage() {
                 </div>
               )}
               {enabledSections.dailyTrend && (
-                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <div className="border border-gray-200 rounded-lg">
                   <WHeader icon={<TrendingUp className="w-4 h-4 text-blue-500" />} title={SECTION_LABELS.dailyTrend} />
                   <div style={{ height: CHART_H }}>
                     <ResponsiveContainer width="100%" height="100%">
@@ -485,14 +510,14 @@ export default function ProjectReportPage() {
           {defectRowCount > 0 && (
             <div style={{ display: 'grid', gridTemplateColumns: `repeat(${defectRowCount}, 1fr)`, gap: 12, pageBreakInside: 'avoid' }}>
               {enabledSections.defectByStatus && (
-                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <div className="border border-gray-200 rounded-lg">
                   <WHeader icon={<Bug className="w-4 h-4 text-rose-500" />} title={SECTION_LABELS.defectByStatus} />
                   {defectByStatus.length === 0
                     ? <EmptyChart msg="No status column mapped. Select it when uploading defects." />
                     : (
                       <div style={{ height: CHART_H }}>
                         <ResponsiveContainer width="100%" height="100%">
-                          <PieChart margin={{ top: 18, right: 18, bottom: 0, left: 18 }}>
+                          <PieChart margin={{ top: 28, right: 28, bottom: 0, left: 28 }}>
                             <Pie data={defectByStatus} dataKey="count" nameKey="status"
                               cx="50%" cy="50%" outerRadius={65}
                               label={renderPieOutsideLabel} labelLine={false}>
@@ -507,7 +532,7 @@ export default function ProjectReportPage() {
                 </div>
               )}
               {enabledSections.defectBySeverity && (
-                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <div className="border border-gray-200 rounded-lg">
                   <WHeader icon={<AlertTriangle className="w-4 h-4 text-amber-500" />} title={SECTION_LABELS.defectBySeverity} />
                   {defectBySeverity.length === 0
                     ? <EmptyChart msg="No severity column mapped. Select it when uploading defects." />
@@ -533,7 +558,7 @@ export default function ProjectReportPage() {
 
           {/* Channel-wise Execution */}
           {enabledSections.channelExecution && (
-            <div className="border border-gray-200 rounded-lg overflow-hidden" style={{ pageBreakInside: 'avoid' }}>
+            <div className="border border-gray-200 rounded-lg" style={{ pageBreakInside: 'avoid' }}>
               <WHeader icon={<BarChart2 className="w-4 h-4 text-purple-500" />} title={SECTION_LABELS.channelExecution} />
               {channelExecution.length === 0
                 ? <EmptyChart msg="No channel column mapped. Select it when uploading test cases." />
@@ -562,7 +587,7 @@ export default function ProjectReportPage() {
 
           {/* Detected vs Resolved */}
           {enabledSections.detectedVsResolved && (
-            <div className="border border-gray-200 rounded-lg overflow-hidden" style={{ pageBreakInside: 'avoid' }}>
+            <div className="border border-gray-200 rounded-lg" style={{ pageBreakInside: 'avoid' }}>
               <WHeader icon={<TrendingUp className="w-4 h-4 text-teal-500" />} title={SECTION_LABELS.detectedVsResolved} />
               {detectedVsResolved.length === 0
                 ? <EmptyChart msg="No date columns mapped. Select Detected/Resolved Date when uploading defects." />
@@ -586,12 +611,12 @@ export default function ProjectReportPage() {
 
           {/* Defect Table */}
           {enabledSections.defectTable && (
-            <div className="border border-gray-200 rounded-lg overflow-hidden" style={{ pageBreakInside: 'avoid' }}>
+            <div className="border border-gray-200 rounded-lg" style={{ pageBreakInside: 'avoid' }}>
               <WHeader icon={<Bug className="w-4 h-4 text-gray-500" />} title={SECTION_LABELS.defectTable} />
               {defectsToShow.length === 0
                 ? <div className="flex items-center justify-center h-16 text-xs text-gray-400">No defects found.</div>
                 : (
-                  <div className="overflow-auto print:overflow-visible" style={{ maxHeight: 320 }}>
+                  <div className="overflow-auto print:overflow-visible">
                     <table className="w-full text-xs border-collapse" style={{ tableLayout: 'fixed' }}>
                       <thead className="bg-gray-50 sticky top-0">
                         <tr>

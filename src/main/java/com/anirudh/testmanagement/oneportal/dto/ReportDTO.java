@@ -81,6 +81,7 @@ public class ReportDTO {
     public static class ProjectReportSummary {
         String projectName;
         String generatedAt;
+        String highlights;
         ExecutionSummary executionSummary;
         List<StatusCount> executionByStatus;
         List<DailyActivity> dailyTrend;
