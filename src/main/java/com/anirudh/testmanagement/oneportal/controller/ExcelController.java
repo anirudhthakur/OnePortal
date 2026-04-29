@@ -37,7 +37,10 @@ public class ExcelController {
             @RequestParam(value = "uploaderId", required = false) Long uploaderId,
             @RequestParam(value = "projectId", required = false) Long projectId,
             @RequestParam(value = "executionDateColumnName", required = false) String executionDateColumnName,
-            @RequestParam(value = "channelColumnName", required = false) String channelColumnName) {
+            @RequestParam(value = "channelColumnName", required = false) String channelColumnName,
+            @RequestParam(value = "linkedDefectColumnName", required = false) String linkedDefectColumnName,
+            @RequestParam(value = "statusColumnName", required = false) String statusColumnName,
+            @RequestParam(value = "assignedToColumnName", required = false) String assignedToColumnName) {
 
         if (file.isEmpty()) {
             throw new IllegalArgumentException("Uploaded file is empty");
@@ -46,7 +49,8 @@ public class ExcelController {
         if (name == null || !name.toLowerCase().endsWith(".xlsx")) {
             throw new IllegalArgumentException("Only .xlsx files are supported");
         }
-        return excelImportService.importExcel(file, uploaderId, projectId, executionDateColumnName, channelColumnName);
+        return excelImportService.importExcel(file, uploaderId, projectId, executionDateColumnName, channelColumnName,
+                linkedDefectColumnName, statusColumnName, assignedToColumnName);
     }
 
     @GetMapping("/sheets")
@@ -105,14 +109,18 @@ public class ExcelController {
             @RequestParam(value = "uploaderId", required = false) Long uploaderId,
             @RequestParam Long projectId,
             @RequestParam(value = "executionDateColumnName", required = false) String executionDateColumnName,
-            @RequestParam(value = "channelColumnName", required = false) String channelColumnName) {
+            @RequestParam(value = "channelColumnName", required = false) String channelColumnName,
+            @RequestParam(value = "linkedDefectColumnName", required = false) String linkedDefectColumnName,
+            @RequestParam(value = "statusColumnName", required = false) String statusColumnName,
+            @RequestParam(value = "assignedToColumnName", required = false) String assignedToColumnName) {
 
         if (file.isEmpty()) throw new IllegalArgumentException("Uploaded file is empty");
         String name = file.getOriginalFilename();
         if (name == null || !name.toLowerCase().endsWith(".xlsx")) {
             throw new IllegalArgumentException("Only .xlsx files are supported");
         }
-        return excelImportService.replaceSheet(file, uploaderId, projectId, executionDateColumnName, channelColumnName);
+        return excelImportService.replaceSheet(file, uploaderId, projectId, executionDateColumnName, channelColumnName,
+                linkedDefectColumnName, statusColumnName, assignedToColumnName);
     }
 
     @DeleteMapping("/sheets/{sheetId}")

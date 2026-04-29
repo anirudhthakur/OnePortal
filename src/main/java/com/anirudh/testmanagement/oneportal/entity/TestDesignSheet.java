@@ -43,6 +43,15 @@ public class TestDesignSheet {
     @Column
     private String channelColumnName;
 
+    @Column
+    private String linkedDefectColumnName;
+
+    @Column
+    private String statusColumnName;
+
+    @Column
+    private String assignedToColumnName;
+
     @OneToMany(mappedBy = "sheet", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<TestDesignRow> rows = new ArrayList<>();

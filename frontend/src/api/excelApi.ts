@@ -14,6 +14,9 @@ export const uploadExcel = async (
   projectId?: number,
   executionDateColumnName?: string,
   channelColumnName?: string,
+  linkedDefectColumnName?: string,
+  statusColumnName?: string,
+  assignedToColumnName?: string,
 ): Promise<UploadResponse> => {
   const form = new FormData();
   form.append('file', file);
@@ -22,6 +25,9 @@ export const uploadExcel = async (
   if (projectId != null) params.projectId = projectId;
   if (executionDateColumnName) params.executionDateColumnName = executionDateColumnName;
   if (channelColumnName) params.channelColumnName = channelColumnName;
+  if (linkedDefectColumnName) params.linkedDefectColumnName = linkedDefectColumnName;
+  if (statusColumnName) params.statusColumnName = statusColumnName;
+  if (assignedToColumnName) params.assignedToColumnName = assignedToColumnName;
   const { data } = await api.post<UploadResponse>('/api/v1/excel/upload', form, { params });
   return data;
 };
@@ -92,6 +98,9 @@ export const replaceSheet = async (
   projectId: number,
   executionDateColumnName?: string,
   channelColumnName?: string,
+  linkedDefectColumnName?: string,
+  statusColumnName?: string,
+  assignedToColumnName?: string,
 ): Promise<UploadResponse> => {
   const form = new FormData();
   form.append('file', file);
@@ -99,6 +108,9 @@ export const replaceSheet = async (
   if (uploaderId != null) params.uploaderId = uploaderId;
   if (executionDateColumnName) params.executionDateColumnName = executionDateColumnName;
   if (channelColumnName) params.channelColumnName = channelColumnName;
+  if (linkedDefectColumnName) params.linkedDefectColumnName = linkedDefectColumnName;
+  if (statusColumnName) params.statusColumnName = statusColumnName;
+  if (assignedToColumnName) params.assignedToColumnName = assignedToColumnName;
   const { data } = await api.post<UploadResponse>('/api/v1/excel/replace', form, { params });
   return data;
 };

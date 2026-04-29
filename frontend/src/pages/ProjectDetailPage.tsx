@@ -142,6 +142,9 @@ export default function ProjectDetailPage() {
   const [tcParsedColumns, setTcParsedColumns] = useState<string[]>([]);
   const [selectedExecDateCol, setSelectedExecDateCol] = useState('');
   const [selectedChannelCol, setSelectedChannelCol] = useState('');
+  const [selectedLinkedDefectCol, setSelectedLinkedDefectCol] = useState('');
+  const [selectedTCStatusCol, setSelectedTCStatusCol] = useState('');
+  const [selectedAssignedToCol, setSelectedAssignedToCol] = useState('');
   const [tcMappingError, setTcMappingError] = useState<string | null>(null);
   const [isParsing, setIsParsing] = useState(false);
   const [columnMappingError, setColumnMappingError] = useState<string | null>(null);
@@ -296,29 +299,33 @@ export default function ProjectDetailPage() {
   });
 
   const uploadMutation = useMutation({
-    mutationFn: ({ file, execDateCol, channelCol }: { file: File; execDateCol?: string; channelCol?: string }) => {
+    mutationFn: ({ file, execDateCol, channelCol, linkedDefectCol, statusCol, assignedToCol }: { file: File; execDateCol?: string; channelCol?: string; linkedDefectCol?: string; statusCol?: string; assignedToCol?: string }) => {
       if (!currentUser) throw new Error('No user selected');
-      return uploadExcel(file, currentUser.id, id, execDateCol, channelCol);
+      return uploadExcel(file, currentUser.id, id, execDateCol, channelCol, linkedDefectCol, statusCol, assignedToCol);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['projectSheet', id] });
       setUploadError(null);
       setShowTCMappingModal(false);
       setPendingTCFile(null);
+      setSelectedExecDateCol(''); setSelectedChannelCol('');
+      setSelectedLinkedDefectCol(''); setSelectedTCStatusCol(''); setSelectedAssignedToCol('');
     },
     onError: (err: Error) => setUploadError(err.message || 'Upload failed'),
   });
 
   const replaceMutation = useMutation({
-    mutationFn: ({ file, execDateCol, channelCol }: { file: File; execDateCol?: string; channelCol?: string }) => {
+    mutationFn: ({ file, execDateCol, channelCol, linkedDefectCol, statusCol, assignedToCol }: { file: File; execDateCol?: string; channelCol?: string; linkedDefectCol?: string; statusCol?: string; assignedToCol?: string }) => {
       if (!currentUser) throw new Error('No user selected');
-      return replaceSheet(file, currentUser.id, id, execDateCol, channelCol);
+      return replaceSheet(file, currentUser.id, id, execDateCol, channelCol, linkedDefectCol, statusCol, assignedToCol);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['projectSheet', id] });
       setReplaceError(null);
       setShowTCMappingModal(false);
       setPendingTCFile(null);
+      setSelectedExecDateCol(''); setSelectedChannelCol('');
+      setSelectedLinkedDefectCol(''); setSelectedTCStatusCol(''); setSelectedAssignedToCol('');
     },
     onError: (err: Error) => setReplaceError(err.message || 'Replace failed'),
   });
@@ -406,12 +413,31 @@ export default function ProjectDetailPage() {
     }
   };
 
+  const closeTCMappingModal = () => {
+    setShowTCMappingModal(false);
+    setPendingTCFile(null);
+    setSelectedExecDateCol('');
+    setSelectedChannelCol('');
+    setSelectedLinkedDefectCol('');
+    setSelectedTCStatusCol('');
+    setSelectedAssignedToCol('');
+    setTcMappingError(null);
+  };
+
   const handleConfirmTCMapping = () => {
     if (!pendingTCFile) return;
+    const common = {
+      file: pendingTCFile,
+      execDateCol: selectedExecDateCol || undefined,
+      channelCol: selectedChannelCol || undefined,
+      linkedDefectCol: selectedLinkedDefectCol || undefined,
+      statusCol: selectedTCStatusCol || undefined,
+      assignedToCol: selectedAssignedToCol || undefined,
+    };
     if (tcIsReplace) {
-      replaceMutation.mutate({ file: pendingTCFile, execDateCol: selectedExecDateCol || undefined, channelCol: selectedChannelCol || undefined });
+      replaceMutation.mutate(common);
     } else {
-      uploadMutation.mutate({ file: pendingTCFile, execDateCol: selectedExecDateCol || undefined, channelCol: selectedChannelCol || undefined });
+      uploadMutation.mutate(common);
     }
   };
 
@@ -969,7 +995,7 @@ export default function ProjectDetailPage() {
               <h3 className="text-base font-semibold text-gray-800 flex items-center gap-2">
                 <TableProperties className="w-4 h-4 text-indigo-500" /> Map Test Case Columns
               </h3>
-              <button onClick={() => { setShowTCMappingModal(false); setPendingTCFile(null); }} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+              <button onClick={closeTCMappingModal} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
             </div>
             <p className="text-sm text-gray-500 mb-4">
               Select which columns from your test case file to use for reporting. These are optional but enable richer charts.
@@ -997,6 +1023,39 @@ export default function ProjectDetailPage() {
                   {tcParsedColumns.map(col => <option key={col} value={col}>{col}</option>)}
                 </select>
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Status Column <span className="text-gray-400 font-normal">(optional — maps test case status on import)</span></label>
+                <select
+                  value={selectedTCStatusCol}
+                  onChange={e => setSelectedTCStatusCol(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                >
+                  <option value="">None</option>
+                  {tcParsedColumns.map(col => <option key={col} value={col}>{col}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Assigned To Column <span className="text-gray-400 font-normal">(optional — maps assignee on import)</span></label>
+                <select
+                  value={selectedAssignedToCol}
+                  onChange={e => setSelectedAssignedToCol(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                >
+                  <option value="">None</option>
+                  {tcParsedColumns.map(col => <option key={col} value={col}>{col}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Linked Defect Column <span className="text-gray-400 font-normal">(optional — links defects to test cases on import)</span></label>
+                <select
+                  value={selectedLinkedDefectCol}
+                  onChange={e => setSelectedLinkedDefectCol(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                >
+                  <option value="">None</option>
+                  {tcParsedColumns.map(col => <option key={col} value={col}>{col}</option>)}
+                </select>
+              </div>
               {tcMappingError && (
                 <div className="flex items-start gap-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3">
                   <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />{tcMappingError}
@@ -1005,7 +1064,7 @@ export default function ProjectDetailPage() {
             </div>
             <div className="flex gap-3 mt-6">
               <button
-                onClick={() => { setShowTCMappingModal(false); setPendingTCFile(null); }}
+                onClick={closeTCMappingModal}
                 className="flex-1 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50"
               >
                 Cancel

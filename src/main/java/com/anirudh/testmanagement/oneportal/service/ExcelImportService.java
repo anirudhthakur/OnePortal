@@ -42,25 +42,33 @@ public class ExcelImportService {
 
     @Transactional
     public TestDesignDTO.UploadResponse importExcel(MultipartFile file, Long uploaderId, Long projectId,
-                                                     String executionDateColumnName, String channelColumnName) {
-        return doImport(file, uploaderId, projectId, false, executionDateColumnName, channelColumnName);
+                                                     String executionDateColumnName, String channelColumnName,
+                                                     String linkedDefectColumnName, String statusColumnName,
+                                                     String assignedToColumnName) {
+        return doImport(file, uploaderId, projectId, false, executionDateColumnName, channelColumnName,
+                linkedDefectColumnName, statusColumnName, assignedToColumnName);
     }
 
     @Transactional
     public TestDesignDTO.UploadResponse replaceSheet(MultipartFile file, Long uploaderId, Long projectId,
-                                                      String executionDateColumnName, String channelColumnName) {
+                                                      String executionDateColumnName, String channelColumnName,
+                                                      String linkedDefectColumnName, String statusColumnName,
+                                                      String assignedToColumnName) {
         if (projectId == null) throw new IllegalArgumentException("projectId is required for replace");
         sheetRepository.findByProjectId(projectId).ifPresent(existing -> {
             rowRepository.deleteLinkedDefectsBySheetId(existing.getId());
             rowRepository.deleteBySheetId(existing.getId());
             sheetRepository.delete(existing);
         });
-        return doImport(file, uploaderId, projectId, true, executionDateColumnName, channelColumnName);
+        return doImport(file, uploaderId, projectId, true, executionDateColumnName, channelColumnName,
+                linkedDefectColumnName, statusColumnName, assignedToColumnName);
     }
 
     private TestDesignDTO.UploadResponse doImport(MultipartFile file, Long uploaderId,
                                                    Long projectId, boolean smartMapping,
-                                                   String executionDateColumnName, String channelColumnName) {
+                                                   String executionDateColumnName, String channelColumnName,
+                                                   String linkedDefectColumnName, String statusColumnName,
+                                                   String assignedToColumnName) {
         User uploader = uploaderId != null
                 ? userRepository.findById(uploaderId).orElse(null)
                 : null;
@@ -84,17 +92,28 @@ public class ExcelImportService {
                 columns.add(header.isEmpty() ? "Column_" + (c + 1) : header);
             }
 
-            // Identify smart-mapping columns
+            // Identify status and assignedTo columns — explicit mapping takes priority over heuristics
             int statusColIdx = -1;
             int assignedToColIdx = -1;
-            if (smartMapping) {
+            if (statusColumnName != null && !statusColumnName.isBlank()) {
+                for (int i = 0; i < columns.size(); i++) {
+                    if (columns.get(i).equalsIgnoreCase(statusColumnName.trim())) { statusColIdx = i; break; }
+                }
+            } else if (smartMapping) {
                 for (int i = 0; i < columns.size(); i++) {
                     String col = columns.get(i).trim().toLowerCase();
-                    if (col.equals("status")) {
-                        statusColIdx = i;
-                    } else if (col.equals("assigned to") || col.equals("assigned_to")
-                            || col.equals("assignedto")) {
-                        assignedToColIdx = i;
+                    if (col.equals("status")) { statusColIdx = i; break; }
+                }
+            }
+            if (assignedToColumnName != null && !assignedToColumnName.isBlank()) {
+                for (int i = 0; i < columns.size(); i++) {
+                    if (columns.get(i).equalsIgnoreCase(assignedToColumnName.trim())) { assignedToColIdx = i; break; }
+                }
+            } else if (smartMapping) {
+                for (int i = 0; i < columns.size(); i++) {
+                    String col = columns.get(i).trim().toLowerCase();
+                    if (col.equals("assigned to") || col.equals("assigned_to") || col.equals("assignedto")) {
+                        assignedToColIdx = i; break;
                     }
                 }
             }
@@ -108,22 +127,29 @@ public class ExcelImportService {
                 log.info("[defect-link] project={} defectLookup size={} keys={}",
                         projectId, defectLookup.size(),
                         defectLookup.size() <= 30 ? defectLookup.keySet() : "(too many to print)");
-                // First pass: prefer explicit "linked defects" / "linked defect" column
-                for (int i = 0; i < columns.size(); i++) {
-                    String col = columns.get(i).trim().toLowerCase();
-                    if (col.equals("linked defects") || col.equals("linked defect")) {
-                        defectColIdx = i;
-                        break;
+                // Explicit linked-defect column mapping takes priority
+                if (linkedDefectColumnName != null && !linkedDefectColumnName.isBlank()) {
+                    for (int i = 0; i < columns.size(); i++) {
+                        if (columns.get(i).equalsIgnoreCase(linkedDefectColumnName.trim())) {
+                            defectColIdx = i; break;
+                        }
                     }
                 }
-                // Second pass: fall back to generic "defects" / "defect" / "defect id"
+                // Fallback: heuristic column name detection
+                if (defectColIdx < 0) {
+                    for (int i = 0; i < columns.size(); i++) {
+                        String col = columns.get(i).trim().toLowerCase();
+                        if (col.equals("linked defects") || col.equals("linked defect")) {
+                            defectColIdx = i; break;
+                        }
+                    }
+                }
                 if (defectColIdx < 0) {
                     for (int i = 0; i < columns.size(); i++) {
                         String col = columns.get(i).trim().toLowerCase();
                         if (col.equals("defects") || col.equals("defect")
                                 || col.equals("defect id") || col.equals("defect ids")) {
-                            defectColIdx = i;
-                            break;
+                            defectColIdx = i; break;
                         }
                     }
                 }
@@ -139,6 +165,9 @@ public class ExcelImportService {
                     .project(project)
                     .executionDateColumnName(executionDateColumnName != null && !executionDateColumnName.isBlank() ? executionDateColumnName : null)
                     .channelColumnName(channelColumnName != null && !channelColumnName.isBlank() ? channelColumnName : null)
+                    .linkedDefectColumnName(linkedDefectColumnName != null && !linkedDefectColumnName.isBlank() ? linkedDefectColumnName : null)
+                    .statusColumnName(statusColumnName != null && !statusColumnName.isBlank() ? statusColumnName : null)
+                    .assignedToColumnName(assignedToColumnName != null && !assignedToColumnName.isBlank() ? assignedToColumnName : null)
                     .build();
             designSheet = sheetRepository.save(designSheet);
 
@@ -158,17 +187,15 @@ public class ExcelImportService {
                 RowStatus rowStatus = RowStatus.NOT_STARTED;
                 User assignedTo = null;
 
-                if (smartMapping) {
-                    if (statusColIdx >= 0) {
-                        String statusVal = rowMap.getOrDefault(columns.get(statusColIdx), "");
-                        RowStatus parsed = parseStatusValue(statusVal);
-                        if (parsed != null) rowStatus = parsed;
-                    }
-                    if (assignedToColIdx >= 0) {
-                        String username = rowMap.getOrDefault(columns.get(assignedToColIdx), "").trim();
-                        if (!username.isEmpty()) {
-                            assignedTo = userRepository.findByUsername(username).orElse(null);
-                        }
+                if (statusColIdx >= 0) {
+                    String statusVal = rowMap.getOrDefault(columns.get(statusColIdx), "");
+                    RowStatus parsed = parseStatusValue(statusVal);
+                    if (parsed != null) rowStatus = parsed;
+                }
+                if (assignedToColIdx >= 0) {
+                    String username = rowMap.getOrDefault(columns.get(assignedToColIdx), "").trim();
+                    if (!username.isEmpty()) {
+                        assignedTo = userRepository.findByUsername(username).orElse(null);
                     }
                 }
 
