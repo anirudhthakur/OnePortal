@@ -5,7 +5,7 @@ import {
   ChevronRight, Search, ArrowUpDown, ArrowUp, ArrowDown,
   ChevronLeft, ChevronRight as ChevronRightIcon,
   Bug, AlertCircle, Download, Plus, Trash2, CheckCircle,
-  X, ChevronDown, Filter, Maximize2, Clock, FlaskConical,
+  X, ChevronDown, Filter, Maximize2, Clock, FlaskConical, Columns,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import {
@@ -80,6 +80,11 @@ export default function ProjectDefectsPage() {
   const [dragOverCol, setDragOverCol] = useState<string | null>(null);
   const dragColRef = useRef<string | null>(null);
 
+  // Column visibility state
+  const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set());
+  const [showColConfig, setShowColConfig] = useState(false);
+  const colConfigRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
       if (!resizeRef.current) return;
@@ -95,6 +100,17 @@ export default function ProjectDefectsPage() {
       window.removeEventListener('mouseup', onMouseUp);
     };
   }, []);
+
+  // Close column config dropdown when clicking outside
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (colConfigRef.current && !colConfigRef.current.contains(e.target as Node)) {
+        setShowColConfig(false);
+      }
+    };
+    if (showColConfig) document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showColConfig]);
 
   const { data: project } = useQuery({
     queryKey: ['project', id],
@@ -163,6 +179,12 @@ export default function ProjectDefectsPage() {
       ...allCols.filter(c => !columnOrder.includes(c)),
     ];
   }, [columnOrder, defectPage?.columns]);
+
+  // Columns actually rendered — hidden ones excluded but kept in order
+  const visibleColumns = useMemo(
+    () => orderedColumns.filter(c => !hiddenColumns.has(c)),
+    [orderedColumns, hiddenColumns]
+  );
 
   const uniqueColValues: Record<string, string[]> = useMemo(() => {
     if (!defectPage) return {};
@@ -449,6 +471,58 @@ export default function ProjectDefectsPage() {
           <span className="text-xs text-gray-400">{filteredRows.length} defects</span>
 
           <div className="flex items-center gap-2 ml-auto">
+            {/* Column visibility button */}
+            {defectPage && (
+              <div className="relative" ref={colConfigRef}>
+                <button
+                  onClick={() => setShowColConfig(v => !v)}
+                  className="flex items-center gap-1.5 text-xs font-medium text-gray-700 hover:text-rose-700 border border-gray-300 hover:border-rose-400 px-3 py-1.5 rounded-lg transition-colors"
+                >
+                  <Columns className="w-3.5 h-3.5" /> Columns
+                </button>
+                {showColConfig && (
+                  <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-gray-200 rounded-lg shadow-lg p-3 w-60 max-h-80 overflow-y-auto">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Data Columns</p>
+                    <div className="space-y-1 mb-3">
+                      {defectPage.columns.map(col => (
+                        <label key={col} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 rounded px-1 py-0.5">
+                          <input
+                            type="checkbox"
+                            checked={!hiddenColumns.has(col)}
+                            onChange={() => setHiddenColumns(prev => {
+                              const next = new Set(prev);
+                              next.has(col) ? next.delete(col) : next.add(col);
+                              return next;
+                            })}
+                            className="accent-rose-600"
+                          />
+                          <span className="truncate">{col}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <hr className="border-gray-200 mb-2" />
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Special Columns</p>
+                    <div className="space-y-1">
+                      {[['__comments__', 'Comments'], ['__linked__', 'Linked Tests']].map(([key, label]) => (
+                        <label key={key} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 rounded px-1 py-0.5">
+                          <input
+                            type="checkbox"
+                            checked={!hiddenColumns.has(key)}
+                            onChange={() => setHiddenColumns(prev => {
+                              const next = new Set(prev);
+                              next.has(key) ? next.delete(key) : next.add(key);
+                              return next;
+                            })}
+                            className="accent-rose-600"
+                          />
+                          {label}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
             <button
               onClick={exportToExcel}
               className="flex items-center gap-1.5 text-xs font-medium text-gray-700 hover:text-green-700 border border-gray-300 hover:border-green-400 px-3 py-1.5 rounded-lg transition-colors"
@@ -473,7 +547,7 @@ export default function ProjectDefectsPage() {
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
                 <th className="sticky left-0 z-10 bg-gray-50 px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-10">#</th>
-                {orderedColumns.map((col: string) => {
+                {visibleColumns.map((col: string) => {
                   const dragProps = {
                     draggable: true,
                     onDragStart: () => { dragColRef.current = col; },
@@ -567,7 +641,7 @@ export default function ProjectDefectsPage() {
               {/* Column filter row */}
               <tr className="bg-white border-b border-gray-100">
                 <th className="sticky left-0 z-10 bg-white px-2 py-1" />
-                {orderedColumns.map((col: string) => {
+                {visibleColumns.map((col: string) => {
                   if (col === '__comments__') return <th key={col} className="px-2 py-1 bg-amber-50/50" />;
                   if (col === '__linked__')   return <th key={col} className="px-2 py-1 bg-rose-50/50" />;
                   return (
@@ -594,7 +668,7 @@ export default function ProjectDefectsPage() {
             <tbody>
               {pageRows.length === 0 ? (
                 <tr>
-                  <td colSpan={(defectPage?.columns.length ?? 0) + 4} className="text-center py-12 text-gray-400">
+                  <td colSpan={visibleColumns.length + 3 + (isTesterOrOwner ? 1 : 0)} className="text-center py-12 text-gray-400">
                     No defects match your search
                   </td>
                 </tr>
@@ -640,7 +714,7 @@ export default function ProjectDefectsPage() {
                       </td>
 
                       {/* Data cells */}
-                      {orderedColumns.map((col: string) => {
+                      {visibleColumns.map((col: string) => {
                         // ── Comments virtual column ──────────────────────────
                         if (col === '__comments__') return (
                           <td key={col} style={{ width: colWidths['__comments__'], maxWidth: colWidths['__comments__'] ?? undefined }}

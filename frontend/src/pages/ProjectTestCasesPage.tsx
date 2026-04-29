@@ -5,7 +5,7 @@ import {
   ChevronRight, Search, ArrowUpDown, ArrowUp, ArrowDown,
   ChevronLeft, ChevronRight as ChevronRightIcon, CheckCircle, AlertCircle,
   FileSpreadsheet, Upload, TableProperties, Trash2, Plus, Download, Bug,
-  X, Filter, Maximize2, Clock, Square, CheckSquare,
+  X, Filter, Maximize2, Clock, Square, CheckSquare, Columns,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { getSheetByProject, uploadExcel, updateRow, addRow, deleteRow } from '../api/excelApi';
@@ -45,6 +45,12 @@ const STATUS_COLORS: Record<RowStatus, string> = {
 
 const ALL_STATUSES: RowStatus[] = ['NOT_STARTED', 'IN_PROGRESS', 'PASSED', 'FAILED', 'BLOCKED', 'NOT_APPLICABLE', 'NOT_DELIVERED'];
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+
+const FIXED_COL_LABELS: Record<string, string> = {
+  '__assigned__': 'Assigned To',
+  '__status__': 'Status',
+  '__linked__': 'Linked Defects',
+};
 
 type SortDir = 'asc' | 'desc' | null;
 
@@ -141,6 +147,11 @@ export default function ProjectTestCasesPage() {
   const [dragOverCol, setDragOverCol] = useState<string | null>(null);
   const dragColRef = useRef<string | null>(null);
 
+  // Column visibility state
+  const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set());
+  const [showColConfig, setShowColConfig] = useState(false);
+  const colConfigRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
       if (!resizeRef.current) return;
@@ -156,6 +167,17 @@ export default function ProjectTestCasesPage() {
       window.removeEventListener('mouseup', onMouseUp);
     };
   }, []);
+
+  // Close column config dropdown when clicking outside
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (colConfigRef.current && !colConfigRef.current.contains(e.target as Node)) {
+        setShowColConfig(false);
+      }
+    };
+    if (showColConfig) document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showColConfig]);
 
   const { data: project } = useQuery({
     queryKey: ['project', id],
@@ -215,6 +237,12 @@ export default function ProjectTestCasesPage() {
       ...displayColumns.filter(c => !columnOrder.includes(c)),
     ];
   }, [columnOrder, displayColumns]);
+
+  // Columns that are actually rendered (hidden ones are excluded from view but kept in order)
+  const visibleDisplayColumns = useMemo(
+    () => orderedDisplayColumns.filter(c => !hiddenColumns.has(c)),
+    [orderedDisplayColumns, hiddenColumns]
+  );
 
   const uniqueColValues: Record<string, string[]> = useMemo(() => {
     if (!sheet) return {};
@@ -646,6 +674,58 @@ export default function ProjectTestCasesPage() {
             <span className="text-xs text-gray-400">{filteredRows.length} rows</span>
 
             <div className="flex items-center gap-2 ml-auto">
+              {/* Column visibility button */}
+              {sheet && (
+                <div className="relative" ref={colConfigRef}>
+                  <button
+                    onClick={() => setShowColConfig(v => !v)}
+                    className="flex items-center gap-1.5 text-xs font-medium text-gray-700 hover:text-indigo-700 border border-gray-300 hover:border-indigo-400 px-3 py-1.5 rounded-lg transition-colors"
+                  >
+                    <Columns className="w-3.5 h-3.5" /> Columns
+                  </button>
+                  {showColConfig && (
+                    <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-gray-200 rounded-lg shadow-lg p-3 w-60 max-h-80 overflow-y-auto">
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Data Columns</p>
+                      <div className="space-y-1 mb-3">
+                        {displayColumns.map(col => (
+                          <label key={col} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 rounded px-1 py-0.5">
+                            <input
+                              type="checkbox"
+                              checked={!hiddenColumns.has(col)}
+                              onChange={() => setHiddenColumns(prev => {
+                                const next = new Set(prev);
+                                next.has(col) ? next.delete(col) : next.add(col);
+                                return next;
+                              })}
+                              className="accent-indigo-600"
+                            />
+                            <span className="truncate">{col}</span>
+                          </label>
+                        ))}
+                      </div>
+                      <hr className="border-gray-200 mb-2" />
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Fixed Columns</p>
+                      <div className="space-y-1">
+                        {Object.entries(FIXED_COL_LABELS).map(([key, label]) => (
+                          <label key={key} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 rounded px-1 py-0.5">
+                            <input
+                              type="checkbox"
+                              checked={!hiddenColumns.has(key)}
+                              onChange={() => setHiddenColumns(prev => {
+                                const next = new Set(prev);
+                                next.has(key) ? next.delete(key) : next.add(key);
+                                return next;
+                              })}
+                              className="accent-indigo-600"
+                            />
+                            {label}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
               <button
                 onClick={exportToExcel}
                 className="flex items-center gap-1.5 text-xs font-medium text-gray-700 hover:text-green-700 border border-gray-300 hover:border-green-400 px-3 py-1.5 rounded-lg transition-colors"
@@ -682,7 +762,7 @@ export default function ProjectTestCasesPage() {
                     </th>
                   )}
                   <th className="sticky left-0 z-10 bg-gray-50 px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-10">#</th>
-                  {orderedDisplayColumns.map((col: string) => (
+                  {visibleDisplayColumns.map((col: string) => (
                     <th
                       key={col}
                       draggable
@@ -722,13 +802,17 @@ export default function ProjectTestCasesPage() {
                       />
                     </th>
                   ))}
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap bg-indigo-50 sticky right-24 z-10 min-w-36">
-                    Assigned To
-                  </th>
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap bg-indigo-50 sticky right-0 z-10 min-w-36">
-                    Status
-                  </th>
-                  {defectDropdown.length > 0 && (
+                  {!hiddenColumns.has('__assigned__') && (
+                    <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap bg-indigo-50 sticky right-24 z-10 min-w-36">
+                      Assigned To
+                    </th>
+                  )}
+                  {!hiddenColumns.has('__status__') && (
+                    <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap bg-indigo-50 sticky right-0 z-10 min-w-36">
+                      Status
+                    </th>
+                  )}
+                  {defectDropdown.length > 0 && !hiddenColumns.has('__linked__') && (
                     <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap bg-rose-50 min-w-56">
                       <div className="flex items-center gap-1"><Bug className="w-3 h-3 text-rose-400" /> Linked Defects</div>
                     </th>
@@ -742,7 +826,7 @@ export default function ProjectTestCasesPage() {
                 <tr className="bg-white border-b border-gray-100">
                   {isTesterOrOwner && <th className="sticky left-0 z-10 bg-white px-2 py-1" />}
                   <th className="sticky left-0 z-10 bg-white px-2 py-1" />
-                  {orderedDisplayColumns.map((col: string) => (
+                  {visibleDisplayColumns.map((col: string) => (
                     <th key={col} style={{ width: colWidths[col], minWidth: colWidths[col] ?? 80 }} className="px-2 py-1">
                       <select
                         value={columnFilters[col] ?? ''}
@@ -760,35 +844,39 @@ export default function ProjectTestCasesPage() {
                     </th>
                   ))}
                   {/* Assigned To filter */}
-                  <th className="px-2 py-1 bg-indigo-50/50 sticky right-24 z-10 min-w-36">
-                    <select
-                      value={assigneeFilter}
-                      onChange={(e) => { setAssigneeFilter(e.target.value); setPage(0); }}
-                      className="w-full border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white"
-                    >
-                      <option value="">All</option>
-                      <option value="__unassigned__">Unassigned</option>
-                      {members
-                        .filter((m: ProjectMember) => m.role === 'TESTER' || m.role === 'OWNER')
-                        .map((m: ProjectMember) => (
-                          <option key={m.userId} value={m.userId}>{m.username}</option>
-                        ))}
-                    </select>
-                  </th>
+                  {!hiddenColumns.has('__assigned__') && (
+                    <th className="px-2 py-1 bg-indigo-50/50 sticky right-24 z-10 min-w-36">
+                      <select
+                        value={assigneeFilter}
+                        onChange={(e) => { setAssigneeFilter(e.target.value); setPage(0); }}
+                        className="w-full border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white"
+                      >
+                        <option value="">All</option>
+                        <option value="__unassigned__">Unassigned</option>
+                        {members
+                          .filter((m: ProjectMember) => m.role === 'TESTER' || m.role === 'OWNER')
+                          .map((m: ProjectMember) => (
+                            <option key={m.userId} value={m.userId}>{m.username}</option>
+                          ))}
+                      </select>
+                    </th>
+                  )}
                   {/* Status filter */}
-                  <th className="px-2 py-1 bg-indigo-50/50 sticky right-0 z-10 min-w-36">
-                    <select
-                      value={statusFilter}
-                      onChange={(e) => { setStatusFilter(e.target.value as RowStatus | ''); setPage(0); }}
-                      className="w-full border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white"
-                    >
-                      <option value="">All statuses</option>
-                      {ALL_STATUSES.map(s => (
-                        <option key={s} value={s}>{STATUS_LABELS[s]}</option>
-                      ))}
-                    </select>
-                  </th>
-                  {defectDropdown.length > 0 && (
+                  {!hiddenColumns.has('__status__') && (
+                    <th className="px-2 py-1 bg-indigo-50/50 sticky right-0 z-10 min-w-36">
+                      <select
+                        value={statusFilter}
+                        onChange={(e) => { setStatusFilter(e.target.value as RowStatus | ''); setPage(0); }}
+                        className="w-full border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white"
+                      >
+                        <option value="">All statuses</option>
+                        {ALL_STATUSES.map(s => (
+                          <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+                        ))}
+                      </select>
+                    </th>
+                  )}
+                  {defectDropdown.length > 0 && !hiddenColumns.has('__linked__') && (
                     <th className="px-2 py-1 bg-rose-50/50">
                       <select
                         value={linkedDefectFilter ?? ''}
@@ -813,7 +901,14 @@ export default function ProjectTestCasesPage() {
               <tbody>
                 {pageRows.length === 0 ? (
                   <tr>
-                    <td colSpan={orderedDisplayColumns.length + 5 + (defectDropdown.length > 0 ? 1 : 0) + (isTesterOrOwner ? 1 : 0)} className="text-center py-12 text-gray-400">
+                    <td colSpan={
+                      visibleDisplayColumns.length
+                      + 2 // # and Detail
+                      + (isTesterOrOwner ? 1 : 0) // checkbox
+                      + (!hiddenColumns.has('__assigned__') ? 1 : 0)
+                      + (!hiddenColumns.has('__status__') ? 1 : 0)
+                      + (defectDropdown.length > 0 && !hiddenColumns.has('__linked__') ? 1 : 0)
+                    } className="text-center py-12 text-gray-400">
                       No rows match your search
                     </td>
                   </tr>
@@ -886,7 +981,7 @@ export default function ProjectTestCasesPage() {
                         </td>
 
                         {/* Data cells */}
-                        {orderedDisplayColumns.map((col: string) => {
+                        {visibleDisplayColumns.map((col: string) => {
                           const currentVal = rowCellEdits[col] !== undefined ? rowCellEdits[col] : (row.data[col] ?? '');
                           return (
                             <td key={col} style={{ width: colWidths[col], maxWidth: colWidths[col] ?? undefined }} className="px-2 py-1.5 text-gray-700 overflow-hidden">
@@ -912,6 +1007,7 @@ export default function ProjectTestCasesPage() {
                         })}
 
                         {/* Assigned To */}
+                        {!hiddenColumns.has('__assigned__') && (
                         <td className="px-3 py-2 sticky right-24 z-10 bg-inherit min-w-36">
                           {isOwner ? (
                             <select
@@ -941,8 +1037,10 @@ export default function ProjectTestCasesPage() {
                             </span>
                           )}
                         </td>
+                        )}
 
                         {/* Status + save button */}
+                        {!hiddenColumns.has('__status__') && (
                         <td className="px-3 py-2 sticky right-0 z-10 bg-inherit min-w-36">
                           <div className="flex items-center gap-1.5">
                             {isTesterOrOwner ? (
@@ -976,9 +1074,10 @@ export default function ProjectTestCasesPage() {
                             )}
                           </div>
                         </td>
+                        )}
 
                         {/* Linked Defects */}
-                        {defectDropdown.length > 0 && (() => {
+                        {defectDropdown.length > 0 && !hiddenColumns.has('__linked__') && (() => {
                           const currentLinked: number[] = pendingDefects[row.rowId] !== undefined
                             ? pendingDefects[row.rowId]
                             : (row.linkedDefectIds ?? []);
