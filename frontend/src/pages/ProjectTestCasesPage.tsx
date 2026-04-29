@@ -783,9 +783,17 @@ export default function ProjectTestCasesPage() {
                       }}
                       style={{ width: colWidths[col], minWidth: colWidths[col] ?? 80 }}
                       className={`relative px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-grab hover:bg-gray-100 transition-colors select-none ${dragOverCol === col ? 'bg-indigo-100 border-l-2 border-indigo-400' : ''}`}
-                      onClick={() => handleSort(col)}
                     >
-                      <div className="flex items-center gap-1 pr-2">{col}<SortIcon col={col} /></div>
+                      <div className="flex items-center gap-1 pr-2">
+                        {col}
+                        <button
+                          onClick={e => { e.stopPropagation(); handleSort(col); }}
+                          className="shrink-0 cursor-pointer hover:opacity-70"
+                          title="Sort"
+                        >
+                          <SortIcon col={col} />
+                        </button>
+                      </div>
                       <div
                         draggable={false}
                         className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-indigo-400 transition-colors z-20"
