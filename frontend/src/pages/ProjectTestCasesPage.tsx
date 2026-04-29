@@ -1,11 +1,12 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ChevronRight, Search, ArrowUpDown, ArrowUp, ArrowDown,
   ChevronLeft, ChevronRight as ChevronRightIcon, CheckCircle, AlertCircle,
   FileSpreadsheet, Upload, TableProperties, Trash2, Plus, Download, Bug,
-  X, Filter, Maximize2, Clock, Square, CheckSquare, Columns,
+  X, Filter, Maximize2, Clock, Square, CheckSquare, Columns, ChevronDown,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { getSheetByProject, uploadExcel, updateRow, addRow, deleteRow } from '../api/excelApi';
@@ -54,6 +55,88 @@ const FIXED_COL_LABELS: Record<string, string> = {
 
 type SortDir = 'asc' | 'desc' | null;
 
+function MultiSelectFilter({
+  options,
+  selected,
+  onChange,
+  accent = 'indigo',
+}: {
+  options: { value: string; label: string }[];
+  selected: string[];
+  onChange: (vals: string[]) => void;
+  accent?: 'indigo' | 'rose';
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const dropRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (dropRef.current && !dropRef.current.contains(e.target as Node) &&
+          btnRef.current && !btnRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const handleOpen = () => {
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom, left: r.left, width: Math.max(r.width, 150) });
+    }
+    setOpen(p => !p);
+  };
+
+  const toggle = (val: string) =>
+    onChange(selected.includes(val) ? selected.filter(v => v !== val) : [...selected, val]);
+  const label =
+    selected.length === 0 ? 'All'
+    : selected.length === 1 ? (options.find(o => o.value === selected[0])?.label ?? selected[0])
+    : `${selected.length} selected`;
+  const ringCls = accent === 'rose' ? 'hover:border-rose-400' : 'hover:border-indigo-400';
+  const textCls = accent === 'rose' ? 'text-rose-600' : 'text-indigo-600';
+  const checkCls = accent === 'rose' ? 'accent-rose-500' : 'accent-indigo-500';
+  return (
+    <div className="relative w-full">
+      <button
+        ref={btnRef}
+        onClick={handleOpen}
+        className={`w-full flex items-center justify-between min-w-20 border border-gray-200 rounded px-2 py-1 text-xs bg-white focus:outline-none transition-colors ${ringCls}`}
+      >
+        <span className={`truncate ${selected.length > 0 ? `${textCls} font-medium` : 'text-gray-500'}`}>{label}</span>
+        <ChevronDown className="w-3 h-3 text-gray-400 shrink-0 ml-1" />
+      </button>
+      {open && createPortal(
+        <div
+          ref={dropRef}
+          style={{ position: 'fixed', top: pos.top + 2, left: pos.left, width: pos.width, zIndex: 9999 }}
+          className="bg-white border border-gray-200 rounded shadow-lg max-h-52 overflow-y-auto"
+        >
+          {selected.length > 0 && (
+            <button
+              onClick={() => { onChange([]); setOpen(false); }}
+              className="w-full text-left px-3 py-1.5 text-xs text-red-500 hover:bg-red-50 border-b border-gray-100"
+            >
+              Clear
+            </button>
+          )}
+          {options.map(opt => (
+            <label key={opt.value} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer">
+              <input type="checkbox" checked={selected.includes(opt.value)} onChange={() => toggle(opt.value)} className={checkCls} />
+              <span className="text-xs text-gray-700 truncate">{opt.label}</span>
+            </label>
+          ))}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
+
 function getPaginationRange(current: number, total: number): (number | '...')[] {
   if (total <= 7) return Array.from({ length: total }, (_, i) => i);
   const delta = 2;
@@ -87,16 +170,16 @@ export default function ProjectTestCasesPage() {
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>(null);
 
-  // Per-column filters
-  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
-  const [statusFilter, setStatusFilter] = useState<RowStatus | ''>('');
-  const [assigneeFilter, setAssigneeFilter] = useState<string>('');
+  // Per-column filters (multi-select)
+  const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
+  const [statusFilter, setStatusFilter] = useState<RowStatus[]>([]);
+  const [assigneeFilter, setAssigneeFilter] = useState<string[]>([]);
 
   // Linked-defect filter — initialised from URL param ?defectRowId=
-  const [linkedDefectFilter, setLinkedDefectFilter] = useState<number | null>(
+  const [linkedDefectFilter, setLinkedDefectFilter] = useState<number[]>(
     () => {
       const v = searchParams.get('defectRowId');
-      return v ? Number(v) : null;
+      return v ? [Number(v)] : [];
     }
   );
 
@@ -265,20 +348,20 @@ export default function ProjectTestCasesPage() {
 
   const activeFilterCount = useMemo(
     () =>
-      Object.values(columnFilters).filter(v => v.trim() !== '').length +
+      Object.values(columnFilters).filter(v => v.length > 0).length +
       (search.trim() ? 1 : 0) +
-      (statusFilter ? 1 : 0) +
-      (assigneeFilter ? 1 : 0) +
-      (linkedDefectFilter !== null ? 1 : 0),
+      (statusFilter.length > 0 ? 1 : 0) +
+      (assigneeFilter.length > 0 ? 1 : 0) +
+      (linkedDefectFilter.length > 0 ? 1 : 0),
     [columnFilters, search, statusFilter, assigneeFilter, linkedDefectFilter]
   );
 
   const clearAllFilters = () => {
     setSearch('');
     setColumnFilters({});
-    setStatusFilter('');
-    setAssigneeFilter('');
-    setLinkedDefectFilter(null);
+    setStatusFilter([]);
+    setAssigneeFilter([]);
+    setLinkedDefectFilter([]);
     setSearchParams({});
     setPage(0);
   };
@@ -294,30 +377,30 @@ export default function ProjectTestCasesPage() {
       : [...sheet.rows];
 
     // Status filter
-    if (statusFilter) {
-      rows = rows.filter((row: RowWithMeta) => (row.rowStatus ?? 'NOT_STARTED') === statusFilter);
+    if (statusFilter.length > 0) {
+      rows = rows.filter((row: RowWithMeta) => statusFilter.includes(row.rowStatus ?? 'NOT_STARTED'));
     }
 
     // Assignee filter
-    if (assigneeFilter) {
+    if (assigneeFilter.length > 0) {
       rows = rows.filter((row: RowWithMeta) =>
-        assigneeFilter === '__unassigned__'
-          ? !row.assignedToId
-          : String(row.assignedToId) === assigneeFilter
+        assigneeFilter.some(f =>
+          f === '__unassigned__' ? !row.assignedToId : String(row.assignedToId) === f
+        )
       );
     }
 
-    // Linked-defect filter — show only rows that reference the selected defect row ID
-    if (linkedDefectFilter !== null) {
+    // Linked-defect filter — show only rows that reference any of the selected defect row IDs
+    if (linkedDefectFilter.length > 0) {
       rows = rows.filter((row: RowWithMeta) =>
-        (row.linkedDefectIds ?? []).includes(linkedDefectFilter)
+        linkedDefectFilter.some(id => (row.linkedDefectIds ?? []).includes(id))
       );
     }
 
     // Per data-column filters
-    for (const [col, val] of Object.entries(columnFilters)) {
-      if (!val.trim()) continue;
-      rows = rows.filter((row: RowWithMeta) => (row.data[col] ?? '') === val);
+    for (const [col, vals] of Object.entries(columnFilters)) {
+      if (!vals.length) continue;
+      rows = rows.filter((row: RowWithMeta) => vals.includes(row.data[col] ?? ''));
     }
 
     if (sortCol && sortDir) {
@@ -620,26 +703,21 @@ export default function ProjectTestCasesPage() {
             )}
 
             {/* Linked-defect filter chip */}
-            {linkedDefectFilter !== null && (() => {
-              const defect = defectDropdown.find((d: DropdownItem) => d.rowId === linkedDefectFilter);
-              return (
-                <span className="inline-flex items-center gap-1.5 text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200 px-2.5 py-1.5 rounded-lg">
-                  <Bug className="w-3 h-3" />
-                  Defect: {defect?.defectId ?? `#${linkedDefectFilter}`}
-                  <button
-                    onClick={() => {
-                      setLinkedDefectFilter(null);
-                      setSearchParams({});
-                      setPage(0);
-                    }}
-                    className="ml-0.5 hover:text-rose-900 transition-colors"
-                    title="Clear defect filter"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </span>
-              );
-            })()}
+            {linkedDefectFilter.length > 0 && (
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200 px-2.5 py-1.5 rounded-lg">
+                <Bug className="w-3 h-3" />
+                {linkedDefectFilter.length === 1
+                  ? `Defect: ${defectDropdown.find((d: DropdownItem) => d.rowId === linkedDefectFilter[0])?.defectId ?? `#${linkedDefectFilter[0]}`}`
+                  : `${linkedDefectFilter.length} defects`}
+                <button
+                  onClick={() => { setLinkedDefectFilter([]); setSearchParams({}); setPage(0); }}
+                  className="ml-0.5 hover:text-rose-900 transition-colors"
+                  title="Clear defect filter"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
 
             {/* Bulk status update — shown when rows are selected */}
             {selectedRowIds.size > 0 && isTesterOrOwner && (
@@ -836,71 +914,50 @@ export default function ProjectTestCasesPage() {
                   <th className="sticky left-0 z-10 bg-white px-2 py-1" />
                   {visibleDisplayColumns.map((col: string) => (
                     <th key={col} style={{ width: colWidths[col], minWidth: colWidths[col] ?? 80 }} className="px-2 py-1">
-                      <select
-                        value={columnFilters[col] ?? ''}
-                        onChange={(e) => {
-                          setColumnFilters(prev => ({ ...prev, [col]: e.target.value }));
-                          setPage(0);
-                        }}
-                        className="w-full min-w-20 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 focus:border-indigo-400 bg-white"
-                      >
-                        <option value="">All</option>
-                        {(uniqueColValues[col] ?? []).map(v => (
-                          <option key={v} value={v}>{v}</option>
-                        ))}
-                      </select>
+                      <MultiSelectFilter
+                        options={(uniqueColValues[col] ?? []).map(v => ({ value: v, label: v }))}
+                        selected={columnFilters[col] ?? []}
+                        onChange={vals => { setColumnFilters(prev => ({ ...prev, [col]: vals })); setPage(0); }}
+                      />
                     </th>
                   ))}
                   {/* Assigned To filter */}
                   {!hiddenColumns.has('__assigned__') && (
                     <th className="px-2 py-1 bg-indigo-50/50 sticky right-24 z-10 min-w-36">
-                      <select
-                        value={assigneeFilter}
-                        onChange={(e) => { setAssigneeFilter(e.target.value); setPage(0); }}
-                        className="w-full border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white"
-                      >
-                        <option value="">All</option>
-                        <option value="__unassigned__">Unassigned</option>
-                        {members
-                          .filter((m: ProjectMember) => m.role === 'TESTER' || m.role === 'OWNER')
-                          .map((m: ProjectMember) => (
-                            <option key={m.userId} value={m.userId}>{m.username}</option>
-                          ))}
-                      </select>
+                      <MultiSelectFilter
+                        options={[
+                          { value: '__unassigned__', label: 'Unassigned' },
+                          ...members
+                            .filter((m: ProjectMember) => m.role === 'TESTER' || m.role === 'OWNER')
+                            .map((m: ProjectMember) => ({ value: String(m.userId), label: m.username })),
+                        ]}
+                        selected={assigneeFilter}
+                        onChange={vals => { setAssigneeFilter(vals); setPage(0); }}
+                      />
                     </th>
                   )}
                   {/* Status filter */}
                   {!hiddenColumns.has('__status__') && (
                     <th className="px-2 py-1 bg-indigo-50/50 sticky right-0 z-10 min-w-36">
-                      <select
-                        value={statusFilter}
-                        onChange={(e) => { setStatusFilter(e.target.value as RowStatus | ''); setPage(0); }}
-                        className="w-full border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white"
-                      >
-                        <option value="">All statuses</option>
-                        {ALL_STATUSES.map(s => (
-                          <option key={s} value={s}>{STATUS_LABELS[s]}</option>
-                        ))}
-                      </select>
+                      <MultiSelectFilter
+                        options={ALL_STATUSES.map(s => ({ value: s, label: STATUS_LABELS[s] }))}
+                        selected={statusFilter}
+                        onChange={vals => { setStatusFilter(vals as RowStatus[]); setPage(0); }}
+                      />
                     </th>
                   )}
                   {defectDropdown.length > 0 && !hiddenColumns.has('__linked__') && (
                     <th className="px-2 py-1 bg-rose-50/50">
-                      <select
-                        value={linkedDefectFilter ?? ''}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setLinkedDefectFilter(v ? Number(v) : null);
-                          if (!v) setSearchParams({});
+                      <MultiSelectFilter
+                        accent="rose"
+                        options={defectDropdown.map((d: DropdownItem) => ({ value: String(d.rowId), label: d.defectId }))}
+                        selected={linkedDefectFilter.map(String)}
+                        onChange={vals => {
+                          setLinkedDefectFilter(vals.map(Number));
+                          if (!vals.length) setSearchParams({});
                           setPage(0);
                         }}
-                        className="w-full min-w-24 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-rose-400 focus:border-rose-400 bg-white"
-                      >
-                        <option value="">All</option>
-                        {defectDropdown.map((d: DropdownItem) => (
-                          <option key={d.rowId} value={d.rowId}>{d.defectId}</option>
-                        ))}
-                      </select>
+                      />
                     </th>
                   )}
                   <th className="px-2 py-1" />

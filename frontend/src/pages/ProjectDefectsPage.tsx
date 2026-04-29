@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -21,6 +22,88 @@ import type { DefectRowResponse } from '../types/defect';
 import type { DropdownItem } from '../types/defect';
 
 type SortDir = 'asc' | 'desc' | null;
+
+function MultiSelectFilter({
+  options,
+  selected,
+  onChange,
+  accent = 'rose',
+}: {
+  options: { value: string; label: string }[];
+  selected: string[];
+  onChange: (vals: string[]) => void;
+  accent?: 'indigo' | 'rose';
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const dropRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (dropRef.current && !dropRef.current.contains(e.target as Node) &&
+          btnRef.current && !btnRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const handleOpen = () => {
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom, left: r.left, width: Math.max(r.width, 150) });
+    }
+    setOpen(p => !p);
+  };
+
+  const toggle = (val: string) =>
+    onChange(selected.includes(val) ? selected.filter(v => v !== val) : [...selected, val]);
+  const label =
+    selected.length === 0 ? 'All'
+    : selected.length === 1 ? (options.find(o => o.value === selected[0])?.label ?? selected[0])
+    : `${selected.length} selected`;
+  const ringCls = accent === 'rose' ? 'hover:border-rose-400' : 'hover:border-indigo-400';
+  const textCls = accent === 'rose' ? 'text-rose-600' : 'text-indigo-600';
+  const checkCls = accent === 'rose' ? 'accent-rose-500' : 'accent-indigo-500';
+  return (
+    <div className="relative w-full">
+      <button
+        ref={btnRef}
+        onClick={handleOpen}
+        className={`w-full flex items-center justify-between min-w-20 border border-gray-200 rounded px-2 py-1 text-xs bg-white focus:outline-none transition-colors ${ringCls}`}
+      >
+        <span className={`truncate ${selected.length > 0 ? `${textCls} font-medium` : 'text-gray-500'}`}>{label}</span>
+        <ChevronDown className="w-3 h-3 text-gray-400 shrink-0 ml-1" />
+      </button>
+      {open && createPortal(
+        <div
+          ref={dropRef}
+          style={{ position: 'fixed', top: pos.top + 2, left: pos.left, width: pos.width, zIndex: 9999 }}
+          className="bg-white border border-gray-200 rounded shadow-lg max-h-52 overflow-y-auto"
+        >
+          {selected.length > 0 && (
+            <button
+              onClick={() => { onChange([]); setOpen(false); }}
+              className="w-full text-left px-3 py-1.5 text-xs text-red-500 hover:bg-red-50 border-b border-gray-100"
+            >
+              Clear
+            </button>
+          )}
+          {options.map(opt => (
+            <label key={opt.value} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer">
+              <input type="checkbox" checked={selected.includes(opt.value)} onChange={() => toggle(opt.value)} className={checkCls} />
+              <span className="text-xs text-gray-700 truncate">{opt.label}</span>
+            </label>
+          ))}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100];
 
@@ -59,7 +142,7 @@ export default function ProjectDefectsPage() {
   const [pageSize, setPageSize] = useState(50);
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>(null);
-  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
+  const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
 
   // CRUD state
   const [pendingCells, setPendingCells] = useState<Record<number, Record<string, string>>>({});
@@ -220,7 +303,7 @@ export default function ProjectDefectsPage() {
   const isLoading = loadingSummary || loadingRows;
 
   const activeFilterCount = useMemo(
-    () => Object.values(columnFilters).filter(v => v.trim() !== '').length + (search.trim() ? 1 : 0),
+    () => Object.values(columnFilters).filter(v => v.length > 0).length + (search.trim() ? 1 : 0),
     [columnFilters, search]
   );
 
@@ -242,9 +325,9 @@ export default function ProjectDefectsPage() {
       : [...defectPage.rows];
 
     // Apply per-column filters
-    for (const [col, val] of Object.entries(columnFilters)) {
-      if (!val.trim()) continue;
-      rows = rows.filter((row: DefectRowResponse) => (row.data[col] ?? '') === val);
+    for (const [col, vals] of Object.entries(columnFilters)) {
+      if (!vals.length) continue;
+      rows = rows.filter((row: DefectRowResponse) => vals.includes(row.data[col] ?? ''));
     }
 
     if (sortCol && sortDir) {
@@ -654,19 +737,11 @@ export default function ProjectDefectsPage() {
                   if (col === '__linked__')   return <th key={col} className="px-2 py-1 bg-rose-50/50" />;
                   return (
                     <th key={col} style={{ width: colWidths[col], minWidth: colWidths[col] ?? 80 }} className="px-2 py-1">
-                      <select
-                        value={columnFilters[col] ?? ''}
-                        onChange={(e) => {
-                          setColumnFilters(prev => ({ ...prev, [col]: e.target.value }));
-                          setPage(0);
-                        }}
-                        className="w-full min-w-20 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-rose-400 focus:border-rose-400 bg-white"
-                      >
-                        <option value="">All</option>
-                        {(uniqueColValues[col] ?? []).map(v => (
-                          <option key={v} value={v}>{v}</option>
-                        ))}
-                      </select>
+                      <MultiSelectFilter
+                        options={(uniqueColValues[col] ?? []).map(v => ({ value: v, label: v }))}
+                        selected={columnFilters[col] ?? []}
+                        onChange={vals => { setColumnFilters(prev => ({ ...prev, [col]: vals })); setPage(0); }}
+                      />
                     </th>
                   );
                 })}
