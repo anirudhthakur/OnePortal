@@ -78,8 +78,16 @@ public class DefectService {
 
         User uploader = userRepository.findById(requesterId).orElse(null);
 
-        // Replace existing sheet if present
+        // Snapshot existing links (defect_id string → set of test-row IDs) so they can be
+        // re-established after the sheet is replaced with new surrogate-keyed rows.
+        Map<String, Set<Long>> savedLinksByDefectId = new HashMap<>();
         sheetRepository.findByProjectId(projectId).ifPresent(existing -> {
+            List<Object[]> rows = rowRepository.findExistingLinksForSheet(existing.getId());
+            for (Object[] pair : rows) {
+                String defId = (String) pair[0];
+                Long testRowId = ((Number) pair[1]).longValue();
+                savedLinksByDefectId.computeIfAbsent(defId, k -> new HashSet<>()).add(testRowId);
+            }
             rowRepository.deleteLinkedDefectsByDefectSheetId(existing.getId());
             rowRepository.deleteBySheetId(existing.getId());
             sheetRepository.delete(existing);
@@ -166,7 +174,18 @@ public class DefectService {
                         .summary(summary)
                         .rowData(objectMapper.writeValueAsString(rowMap))
                         .build();
-                rowRepository.save(defectRow);
+                defectRow = rowRepository.save(defectRow);
+
+                // Restore any links that existed for this defect_id in the previous sheet
+                if (!savedLinksByDefectId.isEmpty()) {
+                    Set<Long> testRowIds = savedLinksByDefectId.get(defectId);
+                    if (testRowIds != null) {
+                        for (Long testRowId : testRowIds) {
+                            rowRepository.insertLink(testRowId, defectRow.getId());
+                        }
+                    }
+                }
+
                 importedRows++;
             }
 
