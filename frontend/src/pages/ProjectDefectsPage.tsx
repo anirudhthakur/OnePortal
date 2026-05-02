@@ -226,7 +226,7 @@ export default function ProjectDefectsPage() {
     enabled: !!sheetSummary?.sheetId,
   });
 
-  const { data: defectDropdown = [] } = useQuery<DropdownItem[]>({
+  const { data: _defectDropdown = [] } = useQuery<DropdownItem[]>({
     queryKey: ['defectDropdown', id],
     queryFn: () => getDefectDropdown(id),
     enabled: !!id,

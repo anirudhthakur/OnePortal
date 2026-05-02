@@ -19,7 +19,7 @@ export default function Navbar() {
   const [verifyError, setVerifyError] = useState<string | null>(null);
   const [verifying, setVerifying] = useState(false);
 
-  const { data: users = [] } = useQuery({
+  const { data: users = [] } = useQuery<UserType[]>({
     queryKey: ['users'],
     queryFn: getAllUsers,
     enabled: showModal,

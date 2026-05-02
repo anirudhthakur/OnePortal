@@ -52,8 +52,8 @@ const DEFECT_SEVERITY_COLORS: Record<string, string> = {
 /** Renders percentage labels just outside each pie slice, staying within the SVG bounds */
 const RADIAN = Math.PI / 180;
 const renderPieOutsideLabel = ({
-  cx, cy, midAngle, outerRadius, percent,
-}: { cx: number; cy: number; midAngle: number; outerRadius: number; percent: number }) => {
+  cx = 0, cy = 0, midAngle = 0, outerRadius = 0, percent = 0,
+}: { cx?: number; cy?: number; midAngle?: number; outerRadius?: number; percent?: number }) => {
   if (percent < 0.03) return null; // skip slivers < 3%
   const radius = outerRadius + 16;
   const x = cx + radius * Math.cos(-midAngle * RADIAN);
