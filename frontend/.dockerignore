@@ -1,0 +1,10 @@
+# --- Node modules (reinstalled inside the container) ---
+node_modules/
+
+# --- Vite build output (built inside the container) ---
+dist/
+
+# --- IDE / OS noise ---
+.DS_Store
+Thumbs.db
+*.log

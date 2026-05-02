@@ -1,0 +1,16 @@
+# --- Java / Maven build artefacts ---
+target/
+*.class
+
+# --- IDE / OS noise ---
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+
+# --- Runtime / local config ---
+.env
+*.log
+
+# --- Node (frontend managed separately) ---
+frontend/node_modules/
