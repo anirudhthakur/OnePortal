@@ -35,6 +35,7 @@ public class DefectService {
     private final ProjectRepository projectRepository;
     private final ProjectMemberRepository projectMemberRepository;
     private final UserRepository userRepository;
+    private final TestDesignRowRepository testDesignRowRepository;
     private final ObjectMapper objectMapper;
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
@@ -186,6 +187,21 @@ public class DefectService {
                     }
                 }
 
+                // Auto-transition linked test cases if this defect is now closed
+                if (resolvedStatusCol != null) {
+                    String statusValue = rowMap.getOrDefault(resolvedStatusCol, "");
+                    if ("closed".equalsIgnoreCase(statusValue)) {
+                        List<TestDesignRow> affected =
+                                testDesignRowRepository.findFailedOrBlockedByLinkedDefectId(defectRow.getId());
+                        affected.forEach(tc -> tc.setRowStatus(TestDesignRow.RowStatus.IN_PROGRESS));
+                        testDesignRowRepository.saveAll(affected);
+                        if (!affected.isEmpty()) {
+                            log.info("Sheet re-upload: defect {} is closed — transitioned {} linked test row(s) to IN_PROGRESS",
+                                    defectId, affected.size());
+                        }
+                    }
+                }
+
                 importedRows++;
             }
 
@@ -303,6 +319,20 @@ public class DefectService {
         row.setUpdatedBy(requester);
 
         row = rowRepository.save(row);
+
+        // Auto-transition linked test cases when defect is closed
+        String statusCol = sheet.getStatusColumnName();
+        if (statusCol != null && request.getRowData() != null) {
+            String newStatus = request.getRowData().get(statusCol);
+            if ("closed".equalsIgnoreCase(newStatus)) {
+                List<TestDesignRow> affected =
+                        testDesignRowRepository.findFailedOrBlockedByLinkedDefectId(row.getId());
+                affected.forEach(tc -> tc.setRowStatus(TestDesignRow.RowStatus.IN_PROGRESS));
+                testDesignRowRepository.saveAll(affected);
+                log.info("Defect {} closed — transitioned {} linked test row(s) to IN_PROGRESS",
+                        row.getDefectId(), affected.size());
+            }
+        }
 
         try {
             Map<String, String> map = objectMapper.readValue(

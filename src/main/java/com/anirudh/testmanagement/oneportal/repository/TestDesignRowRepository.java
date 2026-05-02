@@ -34,4 +34,16 @@ public interface TestDesignRowRepository extends JpaRepository<TestDesignRow, Lo
                 "FROM test_design_row_linked_defects " +
                 "GROUP BY defect_row_id")
     List<Object[]> countLinkedTestsByDefectId();
+
+    /**
+     * Returns all test design rows linked to a given defect row that are currently
+     * FAILED or BLOCKED. Used to auto-transition them to IN_PROGRESS when the
+     * linked defect is closed.
+     */
+    @Query(nativeQuery = true,
+        value = "SELECT r.* FROM test_design_rows r " +
+                "JOIN test_design_row_linked_defects l ON l.row_id = r.id " +
+                "WHERE l.defect_row_id = :defectRowId " +
+                "AND r.row_status IN ('FAILED', 'BLOCKED')")
+    List<TestDesignRow> findFailedOrBlockedByLinkedDefectId(@Param("defectRowId") Long defectRowId);
 }

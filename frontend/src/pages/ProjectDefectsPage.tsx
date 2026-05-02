@@ -150,6 +150,12 @@ export default function ProjectDefectsPage() {
   const [pendingComments, setPendingComments] = useState<Record<number, string>>({});
   const [savingComments, setSavingComments] = useState<Set<number>>(new Set());
   const [deleteConfirmRow, setDeleteConfirmRow] = useState<DefectRowResponse | null>(null);
+  const [closeConfirmContext, setCloseConfirmContext] = useState<{
+    row: DefectRowResponse;
+    mergedRowData: Record<string, string>;
+    newDefectId: string;
+    newSummary: string;
+  } | null>(null);
 
   // Detail panel
   const [expandedRow, setExpandedRow] = useState<DefectRowResponse | null>(null);
@@ -355,18 +361,19 @@ export default function ProjectDefectsPage() {
   };
 
   // Save row changes
-  const saveRowChanges = async (row: DefectRowResponse) => {
+  const executeRowSave = async (
+    row: DefectRowResponse,
+    mergedRowData: Record<string, string>,
+    newDefectId: string,
+    newSummary: string,
+  ) => {
     if (!currentUser || !sheetSummary) return;
-    const cellEdits = pendingCells[row.rowId];
-    if (!cellEdits || Object.keys(cellEdits).length === 0) return;
-
-    const mergedRowData = { ...row.data, ...cellEdits };
     setSavingRows(prev => new Set(prev).add(row.rowId));
     try {
       await updateDefectRow(sheetSummary.sheetId, row.rowId, currentUser.id, {
         rowData: mergedRowData,
-        defectId: cellEdits[sheetSummary.idColumnName] ?? row.defectId,
-        summary: cellEdits[sheetSummary.summaryColumnName] ?? row.summary ?? '',
+        defectId: newDefectId,
+        summary: newSummary,
       });
       queryClient.invalidateQueries({ queryKey: ['defectRows', sheetSummary.sheetId] });
       queryClient.invalidateQueries({ queryKey: ['defectDropdown', id] });
@@ -376,6 +383,58 @@ export default function ProjectDefectsPage() {
     } finally {
       setSavingRows(prev => { const n = new Set(prev); n.delete(row.rowId); return n; });
     }
+  };
+
+  const saveRowChanges = async (row: DefectRowResponse) => {
+    if (!currentUser || !sheetSummary) return;
+    const cellEdits = pendingCells[row.rowId];
+    if (!cellEdits || Object.keys(cellEdits).length === 0) return;
+
+    const mergedRowData = { ...row.data, ...cellEdits };
+    const newDefectId = cellEdits[sheetSummary.idColumnName] ?? row.defectId;
+    const newSummary = cellEdits[sheetSummary.summaryColumnName] ?? row.summary ?? '';
+
+    // Show confirmation when status is being changed to "Closed" and there are linked test cases
+    const statusCol = sheetSummary.statusColumnName;
+    const linkedCount = linkedTestCounts[row.rowId] ?? 0;
+    if (
+      statusCol &&
+      cellEdits[statusCol] !== undefined &&
+      cellEdits[statusCol].toLowerCase() === 'closed' &&
+      linkedCount > 0
+    ) {
+      setCloseConfirmContext({ row, mergedRowData, newDefectId, newSummary });
+      return;
+    }
+
+    await executeRowSave(row, mergedRowData, newDefectId, newSummary);
+  };
+
+  const handleCloseConfirmYes = async () => {
+    if (!closeConfirmContext) return;
+    const { row, mergedRowData, newDefectId, newSummary } = closeConfirmContext;
+    setCloseConfirmContext(null);
+    await executeRowSave(row, mergedRowData, newDefectId, newSummary);
+  };
+
+  const handleCloseConfirmNo = () => {
+    if (!closeConfirmContext || !sheetSummary?.statusColumnName) {
+      setCloseConfirmContext(null);
+      return;
+    }
+    // Revert the status cell edit — leave other pending changes intact
+    const { row } = closeConfirmContext;
+    setPendingCells(prev => {
+      const rowEdits = { ...(prev[row.rowId] ?? {}) };
+      delete rowEdits[sheetSummary.statusColumnName!];
+      if (Object.keys(rowEdits).length === 0) {
+        const n = { ...prev };
+        delete n[row.rowId];
+        return n;
+      }
+      return { ...prev, [row.rowId]: rowEdits };
+    });
+    setCloseConfirmContext(null);
   };
 
   const saveComment = async (row: DefectRowResponse) => {
@@ -952,6 +1011,44 @@ export default function ProjectDefectsPage() {
           </div>
         )}
       </div>
+
+      {/* Close defect confirmation modal */}
+      {closeConfirmContext && (() => {
+        const linkedCount = linkedTestCounts[closeConfirmContext.row.rowId] ?? 0;
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+            <div className="bg-white rounded-xl p-6 shadow-xl w-full max-w-sm mx-4">
+              <div className="flex items-start gap-3 mb-4">
+                <div className="bg-amber-100 rounded-full p-2 shrink-0">
+                  <AlertCircle className="w-5 h-5 text-amber-600" />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-gray-800">Close Defect?</h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Closing <strong>{closeConfirmContext.row.defectId}</strong> will automatically
+                    move <strong>{linkedCount} linked test case{linkedCount !== 1 ? 's' : ''}</strong> from
+                    Failed / Blocked to <strong>In Progress</strong>. Do you want to continue?
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={handleCloseConfirmNo}
+                  className="flex-1 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50"
+                >
+                  No, Keep Open
+                </button>
+                <button
+                  onClick={handleCloseConfirmYes}
+                  className="flex-1 py-2 text-sm font-medium bg-rose-600 hover:bg-rose-700 text-white rounded-lg"
+                >
+                  Yes, Close Defect
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Delete confirmation modal */}
       {deleteConfirmRow && (
