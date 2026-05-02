@@ -671,6 +671,10 @@ export default function ProjectDetailPage() {
                     <p className="text-xl font-bold text-indigo-600">{stats?.assigned ?? 0}</p>
                     <p className="text-xs text-indigo-500 mt-0.5">Assigned</p>
                   </div>
+                  <div className="bg-teal-50 rounded-lg p-3 text-center">
+                    <p className="text-xl font-bold text-teal-600">{stats ? stats.inProgress + stats.notStarted : 0}</p>
+                    <p className="text-xs text-teal-500 mt-0.5">Available</p>
+                  </div>
                 </div>
                 {/* Pass-rate health score */}
                 {stats && stats.total > 0 && (

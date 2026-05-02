@@ -196,7 +196,14 @@ export default function ProjectTestCasesPage() {
   // Bulk selection
   const [selectedRowIds, setSelectedRowIds] = useState<Set<number>>(new Set());
   const [bulkStatus, setBulkStatus] = useState<RowStatus | ''>('');
+  const [bulkAssignee, setBulkAssignee] = useState<string>('');
+  const [bulkDefectIds, setBulkDefectIds] = useState<number[]>([]);
+  const [showBulkDefectPicker, setShowBulkDefectPicker] = useState(false);
+  const [bulkDefectSearch, setBulkDefectSearch] = useState('');
   const [bulkSaving, setBulkSaving] = useState(false);
+  const bulkDefectBtnRef = useRef<HTMLButtonElement>(null);
+  const bulkDefectPickerRef = useRef<HTMLDivElement>(null);
+  const [bulkDefectPickerPos, setBulkDefectPickerPos] = useState({ top: 0, left: 0 });
 
   // Row expand panel
   const [expandedRow, setExpandedRow] = useState<RowWithMeta | null>(null);
@@ -261,6 +268,22 @@ export default function ProjectTestCasesPage() {
     if (showColConfig) document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [showColConfig]);
+
+  // Close bulk defect picker when clicking outside
+  useEffect(() => {
+    if (!showBulkDefectPicker) return;
+    const handler = (e: MouseEvent) => {
+      if (
+        bulkDefectPickerRef.current && !bulkDefectPickerRef.current.contains(e.target as Node) &&
+        bulkDefectBtnRef.current && !bulkDefectBtnRef.current.contains(e.target as Node)
+      ) {
+        setShowBulkDefectPicker(false);
+        setBulkDefectSearch('');
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showBulkDefectPicker]);
 
   const { data: project } = useQuery({
     queryKey: ['project', id],
@@ -514,19 +537,31 @@ export default function ProjectTestCasesPage() {
     }
   };
 
-  // Bulk status update
-  const applyBulkStatus = async () => {
-    if (!bulkStatus || selectedRowIds.size === 0 || !currentUser || !sheet) return;
+  // Bulk update — status, assignee, and/or linked defects
+  const applyBulk = async () => {
+    if (selectedRowIds.size === 0 || !currentUser || !sheet) return;
+    if (!bulkStatus && bulkAssignee === '' && bulkDefectIds.length === 0) return;
     setBulkSaving(true);
     try {
       await Promise.all(
-        [...selectedRowIds].map(rowId =>
-          updateRow(sheet.sheetId, rowId, currentUser.id, { rowStatus: bulkStatus })
-        )
+        [...selectedRowIds].map(rowId => {
+          const existingRow = sheet.rows.find((r: RowWithMeta) => r.rowId === rowId);
+          // Merge new defects into existing ones (additive, no orphan removal)
+          const mergedDefectIds = bulkDefectIds.length > 0
+            ? [...new Set([...(existingRow?.linkedDefectIds ?? []), ...bulkDefectIds])]
+            : undefined;
+          return updateRow(sheet.sheetId, rowId, currentUser.id, {
+            ...(bulkStatus ? { rowStatus: bulkStatus } : {}),
+            ...(bulkAssignee !== '' ? { assignedToId: Number(bulkAssignee) } : {}),
+            ...(mergedDefectIds !== undefined ? { linkedDefectIds: mergedDefectIds } : {}),
+          });
+        })
       );
       queryClient.invalidateQueries({ queryKey: ['projectSheet', id] });
       setSelectedRowIds(new Set());
       setBulkStatus('');
+      setBulkAssignee('');
+      setBulkDefectIds([]);
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : 'Bulk update failed');
     } finally {
@@ -719,10 +754,12 @@ export default function ProjectTestCasesPage() {
               </span>
             )}
 
-            {/* Bulk status update — shown when rows are selected */}
+            {/* Bulk actions — shown when rows are selected */}
             {selectedRowIds.size > 0 && isTesterOrOwner && (
               <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-1.5">
                 <span className="text-xs font-medium text-indigo-700">{selectedRowIds.size} selected</span>
+
+                {/* Set status */}
                 <select
                   value={bulkStatus}
                   onChange={(e) => setBulkStatus(e.target.value as RowStatus | '')}
@@ -733,15 +770,124 @@ export default function ProjectTestCasesPage() {
                     <option key={s} value={s}>{STATUS_LABELS[s]}</option>
                   ))}
                 </select>
+
+                {/* Assign to — OWNER only */}
+                {isOwner && (
+                  <select
+                    value={bulkAssignee}
+                    onChange={(e) => setBulkAssignee(e.target.value)}
+                    className="border border-indigo-200 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white"
+                  >
+                    <option value="">Assign to…</option>
+                    {members
+                      .filter((m: ProjectMember) => m.role === 'TESTER' || m.role === 'OWNER')
+                      .map((m: ProjectMember) => (
+                        <option key={m.userId} value={m.userId}>{m.username}</option>
+                      ))}
+                  </select>
+                )}
+
+                {/* Link defects */}
+                {defectDropdown.length > 0 && (
+                  <div className="relative">
+                    <button
+                      ref={bulkDefectBtnRef}
+                      onClick={() => {
+                        if (showBulkDefectPicker) {
+                          setShowBulkDefectPicker(false);
+                          setBulkDefectSearch('');
+                        } else {
+                          if (bulkDefectBtnRef.current) {
+                            const r = bulkDefectBtnRef.current.getBoundingClientRect();
+                            setBulkDefectPickerPos({ top: r.bottom + 4, left: r.left });
+                          }
+                          setShowBulkDefectPicker(true);
+                        }
+                      }}
+                      className="flex items-center gap-1 border border-indigo-200 rounded px-2 py-0.5 text-xs bg-white hover:border-indigo-400 focus:outline-none"
+                    >
+                      <Bug className="w-3 h-3 text-rose-400" />
+                      {bulkDefectIds.length > 0
+                        ? <span className="text-rose-600 font-medium">{bulkDefectIds.length} defect{bulkDefectIds.length > 1 ? 's' : ''}</span>
+                        : <span className="text-gray-500">Link defect…</span>}
+                      <ChevronDown className="w-3 h-3 text-gray-400" />
+                    </button>
+                    {showBulkDefectPicker && createPortal(
+                      <div
+                        ref={bulkDefectPickerRef}
+                        style={{ position: 'fixed', top: bulkDefectPickerPos.top, left: bulkDefectPickerPos.left, zIndex: 9999 }}
+                        className="w-80 bg-white border border-gray-200 rounded-lg shadow-xl"
+                      >
+                        <div className="p-2 border-b border-gray-100">
+                          <input
+                            type="text"
+                            value={bulkDefectSearch}
+                            onChange={e => setBulkDefectSearch(e.target.value)}
+                            placeholder="Search defects…"
+                            autoFocus
+                            className="w-full text-xs border border-gray-200 rounded px-2 py-1.5 outline-none focus:border-rose-400"
+                            onClick={e => e.stopPropagation()}
+                          />
+                        </div>
+                        <div className="max-h-52 overflow-y-auto p-1.5">
+                          {defectDropdown
+                            .filter((d: DropdownItem) =>
+                              bulkDefectSearch === '' ||
+                              d.defectId.toLowerCase().includes(bulkDefectSearch.toLowerCase()) ||
+                              (d.summary ?? '').toLowerCase().includes(bulkDefectSearch.toLowerCase())
+                            )
+                            .map((d: DropdownItem) => (
+                              <label key={d.rowId} className="flex items-start gap-2 px-2 py-1.5 rounded hover:bg-gray-50 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={bulkDefectIds.includes(d.rowId)}
+                                  onChange={() => setBulkDefectIds(prev =>
+                                    prev.includes(d.rowId) ? prev.filter(x => x !== d.rowId) : [...prev, d.rowId]
+                                  )}
+                                  className="mt-0.5 shrink-0 accent-rose-600"
+                                />
+                                <span className="text-xs text-gray-700 leading-snug">
+                                  <span className="font-semibold text-rose-600">{d.defectId}</span>
+                                  {d.summary && <span className="text-gray-500"> — {d.summary.length > 50 ? d.summary.slice(0, 50) + '…' : d.summary}</span>}
+                                </span>
+                              </label>
+                            ))}
+                        </div>
+                        <div className="flex items-center justify-between px-3 py-1.5 border-t border-gray-100 bg-gray-50 rounded-b-lg">
+                          <span className="text-xs text-gray-500">{bulkDefectIds.length} selected</span>
+                          <div className="flex gap-2">
+                            {bulkDefectIds.length > 0 && (
+                              <button onClick={() => setBulkDefectIds([])} className="text-xs text-red-500 hover:text-red-700">Clear</button>
+                            )}
+                            <button
+                              onClick={() => { setShowBulkDefectPicker(false); setBulkDefectSearch(''); }}
+                              className="text-xs text-gray-500 hover:text-gray-700"
+                            >
+                              Done
+                            </button>
+                          </div>
+                        </div>
+                      </div>,
+                      document.body
+                    )}
+                  </div>
+                )}
+
                 <button
-                  onClick={applyBulkStatus}
-                  disabled={!bulkStatus || bulkSaving}
+                  onClick={applyBulk}
+                  disabled={(!bulkStatus && bulkAssignee === '' && bulkDefectIds.length === 0) || bulkSaving}
                   className="text-xs font-medium bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded disabled:opacity-50 transition-colors"
                 >
                   {bulkSaving ? 'Saving…' : 'Apply'}
                 </button>
                 <button
-                  onClick={() => { setSelectedRowIds(new Set()); setBulkStatus(''); }}
+                  onClick={() => {
+                    setSelectedRowIds(new Set());
+                    setBulkStatus('');
+                    setBulkAssignee('');
+                    setBulkDefectIds([]);
+                    setShowBulkDefectPicker(false);
+                  }}
                   className="text-indigo-400 hover:text-indigo-600"
                 >
                   <X className="w-3.5 h-3.5" />
