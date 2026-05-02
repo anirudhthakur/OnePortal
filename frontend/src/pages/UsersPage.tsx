@@ -64,9 +64,9 @@ export default function UsersPage() {
     enabled: isAdmin,
   });
 
-  const { data: inactiveUsers = [] } = useQuery({
+  const { data: inactiveUsers = [] } = useQuery<User[]>({
     queryKey: ['inactiveUsers'],
-    queryFn: getInactiveUsers,
+    queryFn: () => getInactiveUsers(),
     enabled: isAdmin,
   });
 
