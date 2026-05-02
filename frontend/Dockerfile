@@ -3,7 +3,7 @@ FROM node:20-alpine AS build
 WORKDIR /app
 
 COPY package.json ./
-RUN npm install --os=linux --cpu=x64
+RUN npm install --force
 
 COPY . .
 
