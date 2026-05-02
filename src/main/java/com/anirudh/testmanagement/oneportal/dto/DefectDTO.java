@@ -26,6 +26,9 @@ public class DefectDTO {
         String idColumnName;
         String summaryColumnName;
         String statusColumnName;
+        String detectedDateColumnName;
+        String resolvedDateColumnName;
+        String severityColumnName;
         long totalRows;
         LocalDateTime createdAt;
         String uploadedByUsername;
@@ -38,6 +41,7 @@ public class DefectDTO {
         Integer rowIndex;
         String defectId;
         String summary;
+        String comments;
         Map<String, String> data;
         LocalDateTime updatedAt;
         String updatedByUsername;
@@ -67,5 +71,6 @@ public class DefectDTO {
         Map<String, String> rowData;
         String defectId;
         String summary;
+        String comments;
     }
 }

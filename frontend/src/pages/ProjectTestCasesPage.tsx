@@ -1,11 +1,12 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ChevronRight, Search, ArrowUpDown, ArrowUp, ArrowDown,
   ChevronLeft, ChevronRight as ChevronRightIcon, CheckCircle, AlertCircle,
   FileSpreadsheet, Upload, TableProperties, Trash2, Plus, Download, Bug,
-  X, Filter, Maximize2, Clock, Square, CheckSquare,
+  X, Filter, Maximize2, Clock, Square, CheckSquare, Columns, ChevronDown,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { getSheetByProject, uploadExcel, updateRow, addRow, deleteRow } from '../api/excelApi';
@@ -22,6 +23,8 @@ const STATUS_LABELS: Record<RowStatus, string> = {
   PASSED: 'Passed',
   FAILED: 'Failed',
   BLOCKED: 'Blocked',
+  NOT_APPLICABLE: 'N/A',
+  NOT_DELIVERED: 'Not Delivered',
 };
 
 const FUNCTIONAL_COLUMN_NAMES = new Set([
@@ -33,16 +36,106 @@ const FUNCTIONAL_COLUMN_NAMES = new Set([
 
 const STATUS_COLORS: Record<RowStatus, string> = {
   NOT_STARTED: 'bg-gray-100 text-gray-600',
-  IN_PROGRESS: 'bg-blue-100 text-blue-700',
+  IN_PROGRESS: 'bg-yellow-100 text-yellow-700',
   PASSED: 'bg-green-100 text-green-700',
   FAILED: 'bg-red-100 text-red-700',
   BLOCKED: 'bg-orange-100 text-orange-700',
+  NOT_APPLICABLE: 'bg-gray-100 text-gray-400',
+  NOT_DELIVERED: 'bg-gray-800 text-white',
 };
 
-const ALL_STATUSES: RowStatus[] = ['NOT_STARTED', 'IN_PROGRESS', 'PASSED', 'FAILED', 'BLOCKED'];
+const ALL_STATUSES: RowStatus[] = ['NOT_STARTED', 'IN_PROGRESS', 'PASSED', 'FAILED', 'BLOCKED', 'NOT_APPLICABLE', 'NOT_DELIVERED'];
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
+const FIXED_COL_LABELS: Record<string, string> = {
+  '__assigned__': 'Assigned To',
+  '__status__': 'Status',
+  '__linked__': 'Linked Defects',
+};
+
 type SortDir = 'asc' | 'desc' | null;
+
+function MultiSelectFilter({
+  options,
+  selected,
+  onChange,
+  accent = 'indigo',
+}: {
+  options: { value: string; label: string }[];
+  selected: string[];
+  onChange: (vals: string[]) => void;
+  accent?: 'indigo' | 'rose';
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const dropRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (dropRef.current && !dropRef.current.contains(e.target as Node) &&
+          btnRef.current && !btnRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const handleOpen = () => {
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom, left: r.left, width: Math.max(r.width, 150) });
+    }
+    setOpen(p => !p);
+  };
+
+  const toggle = (val: string) =>
+    onChange(selected.includes(val) ? selected.filter(v => v !== val) : [...selected, val]);
+  const label =
+    selected.length === 0 ? 'All'
+    : selected.length === 1 ? (options.find(o => o.value === selected[0])?.label ?? selected[0])
+    : `${selected.length} selected`;
+  const ringCls = accent === 'rose' ? 'hover:border-rose-400' : 'hover:border-indigo-400';
+  const textCls = accent === 'rose' ? 'text-rose-600' : 'text-indigo-600';
+  const checkCls = accent === 'rose' ? 'accent-rose-500' : 'accent-indigo-500';
+  return (
+    <div className="relative w-full">
+      <button
+        ref={btnRef}
+        onClick={handleOpen}
+        className={`w-full flex items-center justify-between min-w-20 border border-gray-200 rounded px-2 py-1 text-xs bg-white focus:outline-none transition-colors ${ringCls}`}
+      >
+        <span className={`truncate ${selected.length > 0 ? `${textCls} font-medium` : 'text-gray-500'}`}>{label}</span>
+        <ChevronDown className="w-3 h-3 text-gray-400 shrink-0 ml-1" />
+      </button>
+      {open && createPortal(
+        <div
+          ref={dropRef}
+          style={{ position: 'fixed', top: pos.top + 2, left: pos.left, width: pos.width, zIndex: 9999 }}
+          className="bg-white border border-gray-200 rounded shadow-lg max-h-52 overflow-y-auto"
+        >
+          {selected.length > 0 && (
+            <button
+              onClick={() => { onChange([]); setOpen(false); }}
+              className="w-full text-left px-3 py-1.5 text-xs text-red-500 hover:bg-red-50 border-b border-gray-100"
+            >
+              Clear
+            </button>
+          )}
+          {options.map(opt => (
+            <label key={opt.value} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer">
+              <input type="checkbox" checked={selected.includes(opt.value)} onChange={() => toggle(opt.value)} className={checkCls} />
+              <span className="text-xs text-gray-700 truncate">{opt.label}</span>
+            </label>
+          ))}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
 
 function getPaginationRange(current: number, total: number): (number | '...')[] {
   if (total <= 7) return Array.from({ length: total }, (_, i) => i);
@@ -77,16 +170,16 @@ export default function ProjectTestCasesPage() {
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>(null);
 
-  // Per-column filters
-  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
-  const [statusFilter, setStatusFilter] = useState<RowStatus | ''>('');
-  const [assigneeFilter, setAssigneeFilter] = useState<string>('');
+  // Per-column filters (multi-select)
+  const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
+  const [statusFilter, setStatusFilter] = useState<RowStatus[]>([]);
+  const [assigneeFilter, setAssigneeFilter] = useState<string[]>([]);
 
   // Linked-defect filter — initialised from URL param ?defectRowId=
-  const [linkedDefectFilter, setLinkedDefectFilter] = useState<number | null>(
+  const [linkedDefectFilter, setLinkedDefectFilter] = useState<number[]>(
     () => {
       const v = searchParams.get('defectRowId');
-      return v ? Number(v) : null;
+      return v ? [Number(v)] : [];
     }
   );
 
@@ -103,7 +196,14 @@ export default function ProjectTestCasesPage() {
   // Bulk selection
   const [selectedRowIds, setSelectedRowIds] = useState<Set<number>>(new Set());
   const [bulkStatus, setBulkStatus] = useState<RowStatus | ''>('');
+  const [bulkAssignee, setBulkAssignee] = useState<string>('');
+  const [bulkDefectIds, setBulkDefectIds] = useState<number[]>([]);
+  const [showBulkDefectPicker, setShowBulkDefectPicker] = useState(false);
+  const [bulkDefectSearch, setBulkDefectSearch] = useState('');
   const [bulkSaving, setBulkSaving] = useState(false);
+  const bulkDefectBtnRef = useRef<HTMLButtonElement>(null);
+  const bulkDefectPickerRef = useRef<HTMLDivElement>(null);
+  const [bulkDefectPickerPos, setBulkDefectPickerPos] = useState({ top: 0, left: 0 });
 
   // Row expand panel
   const [expandedRow, setExpandedRow] = useState<RowWithMeta | null>(null);
@@ -132,6 +232,16 @@ export default function ProjectTestCasesPage() {
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
   const resizeRef = useRef<{ col: string; startX: number; startWidth: number } | null>(null);
 
+  // Column reorder state
+  const [columnOrder, setColumnOrder] = useState<string[]>([]);
+  const [dragOverCol, setDragOverCol] = useState<string | null>(null);
+  const dragColRef = useRef<string | null>(null);
+
+  // Column visibility state
+  const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set());
+  const [showColConfig, setShowColConfig] = useState(false);
+  const colConfigRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
       if (!resizeRef.current) return;
@@ -147,6 +257,33 @@ export default function ProjectTestCasesPage() {
       window.removeEventListener('mouseup', onMouseUp);
     };
   }, []);
+
+  // Close column config dropdown when clicking outside
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (colConfigRef.current && !colConfigRef.current.contains(e.target as Node)) {
+        setShowColConfig(false);
+      }
+    };
+    if (showColConfig) document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showColConfig]);
+
+  // Close bulk defect picker when clicking outside
+  useEffect(() => {
+    if (!showBulkDefectPicker) return;
+    const handler = (e: MouseEvent) => {
+      if (
+        bulkDefectPickerRef.current && !bulkDefectPickerRef.current.contains(e.target as Node) &&
+        bulkDefectBtnRef.current && !bulkDefectBtnRef.current.contains(e.target as Node)
+      ) {
+        setShowBulkDefectPicker(false);
+        setBulkDefectSearch('');
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showBulkDefectPicker]);
 
   const { data: project } = useQuery({
     queryKey: ['project', id],
@@ -185,22 +322,69 @@ export default function ProjectTestCasesPage() {
     [sheet?.columns]
   );
 
+  // Seed column order when a new sheet is loaded
+  useEffect(() => {
+    if (displayColumns.length) {
+      setColumnOrder(prev => {
+        const known = new Set(prev);
+        const extra = displayColumns.filter(c => !known.has(c));
+        const pruned = prev.filter(c => displayColumns.includes(c));
+        return [...pruned, ...extra];
+      });
+    }
+  }, [sheet?.sheetId]);
+
+  // Columns in user-defined drag order (falls back to server order on first load)
+  const orderedDisplayColumns = useMemo(() => {
+    if (!displayColumns.length) return [];
+    if (!columnOrder.length) return displayColumns;
+    return [
+      ...columnOrder.filter(c => displayColumns.includes(c)),
+      ...displayColumns.filter(c => !columnOrder.includes(c)),
+    ];
+  }, [columnOrder, displayColumns]);
+
+  // Columns that are actually rendered (hidden ones are excluded from view but kept in order)
+  const visibleDisplayColumns = useMemo(
+    () => orderedDisplayColumns.filter(c => !hiddenColumns.has(c)),
+    [orderedDisplayColumns, hiddenColumns]
+  );
+
+  const uniqueColValues: Record<string, string[]> = useMemo(() => {
+    if (!sheet) return {};
+    const map: Record<string, Set<string>> = {};
+    for (const row of sheet.rows) {
+      for (const col of displayColumns) {
+        const val = (row.data[col] ?? '').trim();
+        if (val) {
+          if (!map[col]) map[col] = new Set();
+          map[col].add(val);
+        }
+      }
+    }
+    const result: Record<string, string[]> = {};
+    for (const col of displayColumns) {
+      result[col] = map[col] ? Array.from(map[col]).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) : [];
+    }
+    return result;
+  }, [sheet, displayColumns]);
+
   const activeFilterCount = useMemo(
     () =>
-      Object.values(columnFilters).filter(v => v.trim() !== '').length +
+      Object.values(columnFilters).filter(v => v.length > 0).length +
       (search.trim() ? 1 : 0) +
-      (statusFilter ? 1 : 0) +
-      (assigneeFilter ? 1 : 0) +
-      (linkedDefectFilter !== null ? 1 : 0),
+      (statusFilter.length > 0 ? 1 : 0) +
+      (assigneeFilter.length > 0 ? 1 : 0) +
+      (linkedDefectFilter.length > 0 ? 1 : 0),
     [columnFilters, search, statusFilter, assigneeFilter, linkedDefectFilter]
   );
 
   const clearAllFilters = () => {
     setSearch('');
     setColumnFilters({});
-    setStatusFilter('');
-    setAssigneeFilter('');
-    setLinkedDefectFilter(null);
+    setStatusFilter([]);
+    setAssigneeFilter([]);
+    setLinkedDefectFilter([]);
     setSearchParams({});
     setPage(0);
   };
@@ -216,31 +400,30 @@ export default function ProjectTestCasesPage() {
       : [...sheet.rows];
 
     // Status filter
-    if (statusFilter) {
-      rows = rows.filter((row: RowWithMeta) => (row.rowStatus ?? 'NOT_STARTED') === statusFilter);
+    if (statusFilter.length > 0) {
+      rows = rows.filter((row: RowWithMeta) => statusFilter.includes(row.rowStatus ?? 'NOT_STARTED'));
     }
 
     // Assignee filter
-    if (assigneeFilter) {
+    if (assigneeFilter.length > 0) {
       rows = rows.filter((row: RowWithMeta) =>
-        assigneeFilter === '__unassigned__'
-          ? !row.assignedToId
-          : String(row.assignedToId) === assigneeFilter
+        assigneeFilter.some(f =>
+          f === '__unassigned__' ? !row.assignedToId : String(row.assignedToId) === f
+        )
       );
     }
 
-    // Linked-defect filter — show only rows that reference the selected defect row ID
-    if (linkedDefectFilter !== null) {
+    // Linked-defect filter — show only rows that reference any of the selected defect row IDs
+    if (linkedDefectFilter.length > 0) {
       rows = rows.filter((row: RowWithMeta) =>
-        (row.linkedDefectIds ?? []).includes(linkedDefectFilter)
+        linkedDefectFilter.some(id => (row.linkedDefectIds ?? []).includes(id))
       );
     }
 
     // Per data-column filters
-    for (const [col, val] of Object.entries(columnFilters)) {
-      if (!val.trim()) continue;
-      const lv = val.toLowerCase();
-      rows = rows.filter((row: RowWithMeta) => (row.data[col] ?? '').toLowerCase().includes(lv));
+    for (const [col, vals] of Object.entries(columnFilters)) {
+      if (!vals.length) continue;
+      rows = rows.filter((row: RowWithMeta) => vals.includes(row.data[col] ?? ''));
     }
 
     if (sortCol && sortDir) {
@@ -354,19 +537,31 @@ export default function ProjectTestCasesPage() {
     }
   };
 
-  // Bulk status update
-  const applyBulkStatus = async () => {
-    if (!bulkStatus || selectedRowIds.size === 0 || !currentUser || !sheet) return;
+  // Bulk update — status, assignee, and/or linked defects
+  const applyBulk = async () => {
+    if (selectedRowIds.size === 0 || !currentUser || !sheet) return;
+    if (!bulkStatus && bulkAssignee === '' && bulkDefectIds.length === 0) return;
     setBulkSaving(true);
     try {
       await Promise.all(
-        [...selectedRowIds].map(rowId =>
-          updateRow(sheet.sheetId, rowId, currentUser.id, { rowStatus: bulkStatus })
-        )
+        [...selectedRowIds].map(rowId => {
+          const existingRow = sheet.rows.find((r: RowWithMeta) => r.rowId === rowId);
+          // Merge new defects into existing ones (additive, no orphan removal)
+          const mergedDefectIds = bulkDefectIds.length > 0
+            ? [...new Set([...(existingRow?.linkedDefectIds ?? []), ...bulkDefectIds])]
+            : undefined;
+          return updateRow(sheet.sheetId, rowId, currentUser.id, {
+            ...(bulkStatus ? { rowStatus: bulkStatus } : {}),
+            ...(bulkAssignee !== '' ? { assignedToId: Number(bulkAssignee) } : {}),
+            ...(mergedDefectIds !== undefined ? { linkedDefectIds: mergedDefectIds } : {}),
+          });
+        })
       );
       queryClient.invalidateQueries({ queryKey: ['projectSheet', id] });
       setSelectedRowIds(new Set());
       setBulkStatus('');
+      setBulkAssignee('');
+      setBulkDefectIds([]);
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : 'Bulk update failed');
     } finally {
@@ -543,31 +738,28 @@ export default function ProjectTestCasesPage() {
             )}
 
             {/* Linked-defect filter chip */}
-            {linkedDefectFilter !== null && (() => {
-              const defect = defectDropdown.find((d: DropdownItem) => d.rowId === linkedDefectFilter);
-              return (
-                <span className="inline-flex items-center gap-1.5 text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200 px-2.5 py-1.5 rounded-lg">
-                  <Bug className="w-3 h-3" />
-                  Defect: {defect?.defectId ?? `#${linkedDefectFilter}`}
-                  <button
-                    onClick={() => {
-                      setLinkedDefectFilter(null);
-                      setSearchParams({});
-                      setPage(0);
-                    }}
-                    className="ml-0.5 hover:text-rose-900 transition-colors"
-                    title="Clear defect filter"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </span>
-              );
-            })()}
+            {linkedDefectFilter.length > 0 && (
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200 px-2.5 py-1.5 rounded-lg">
+                <Bug className="w-3 h-3" />
+                {linkedDefectFilter.length === 1
+                  ? `Defect: ${defectDropdown.find((d: DropdownItem) => d.rowId === linkedDefectFilter[0])?.defectId ?? `#${linkedDefectFilter[0]}`}`
+                  : `${linkedDefectFilter.length} defects`}
+                <button
+                  onClick={() => { setLinkedDefectFilter([]); setSearchParams({}); setPage(0); }}
+                  className="ml-0.5 hover:text-rose-900 transition-colors"
+                  title="Clear defect filter"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
 
-            {/* Bulk status update — shown when rows are selected */}
+            {/* Bulk actions — shown when rows are selected */}
             {selectedRowIds.size > 0 && isTesterOrOwner && (
               <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-1.5">
                 <span className="text-xs font-medium text-indigo-700">{selectedRowIds.size} selected</span>
+
+                {/* Set status */}
                 <select
                   value={bulkStatus}
                   onChange={(e) => setBulkStatus(e.target.value as RowStatus | '')}
@@ -578,15 +770,124 @@ export default function ProjectTestCasesPage() {
                     <option key={s} value={s}>{STATUS_LABELS[s]}</option>
                   ))}
                 </select>
+
+                {/* Assign to — OWNER only */}
+                {isOwner && (
+                  <select
+                    value={bulkAssignee}
+                    onChange={(e) => setBulkAssignee(e.target.value)}
+                    className="border border-indigo-200 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white"
+                  >
+                    <option value="">Assign to…</option>
+                    {members
+                      .filter((m: ProjectMember) => m.role === 'TESTER' || m.role === 'OWNER')
+                      .map((m: ProjectMember) => (
+                        <option key={m.userId} value={m.userId}>{m.username}</option>
+                      ))}
+                  </select>
+                )}
+
+                {/* Link defects */}
+                {defectDropdown.length > 0 && (
+                  <div className="relative">
+                    <button
+                      ref={bulkDefectBtnRef}
+                      onClick={() => {
+                        if (showBulkDefectPicker) {
+                          setShowBulkDefectPicker(false);
+                          setBulkDefectSearch('');
+                        } else {
+                          if (bulkDefectBtnRef.current) {
+                            const r = bulkDefectBtnRef.current.getBoundingClientRect();
+                            setBulkDefectPickerPos({ top: r.bottom + 4, left: r.left });
+                          }
+                          setShowBulkDefectPicker(true);
+                        }
+                      }}
+                      className="flex items-center gap-1 border border-indigo-200 rounded px-2 py-0.5 text-xs bg-white hover:border-indigo-400 focus:outline-none"
+                    >
+                      <Bug className="w-3 h-3 text-rose-400" />
+                      {bulkDefectIds.length > 0
+                        ? <span className="text-rose-600 font-medium">{bulkDefectIds.length} defect{bulkDefectIds.length > 1 ? 's' : ''}</span>
+                        : <span className="text-gray-500">Link defect…</span>}
+                      <ChevronDown className="w-3 h-3 text-gray-400" />
+                    </button>
+                    {showBulkDefectPicker && createPortal(
+                      <div
+                        ref={bulkDefectPickerRef}
+                        style={{ position: 'fixed', top: bulkDefectPickerPos.top, left: bulkDefectPickerPos.left, zIndex: 9999 }}
+                        className="w-80 bg-white border border-gray-200 rounded-lg shadow-xl"
+                      >
+                        <div className="p-2 border-b border-gray-100">
+                          <input
+                            type="text"
+                            value={bulkDefectSearch}
+                            onChange={e => setBulkDefectSearch(e.target.value)}
+                            placeholder="Search defects…"
+                            autoFocus
+                            className="w-full text-xs border border-gray-200 rounded px-2 py-1.5 outline-none focus:border-rose-400"
+                            onClick={e => e.stopPropagation()}
+                          />
+                        </div>
+                        <div className="max-h-52 overflow-y-auto p-1.5">
+                          {defectDropdown
+                            .filter((d: DropdownItem) =>
+                              bulkDefectSearch === '' ||
+                              d.defectId.toLowerCase().includes(bulkDefectSearch.toLowerCase()) ||
+                              (d.summary ?? '').toLowerCase().includes(bulkDefectSearch.toLowerCase())
+                            )
+                            .map((d: DropdownItem) => (
+                              <label key={d.rowId} className="flex items-start gap-2 px-2 py-1.5 rounded hover:bg-gray-50 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={bulkDefectIds.includes(d.rowId)}
+                                  onChange={() => setBulkDefectIds(prev =>
+                                    prev.includes(d.rowId) ? prev.filter(x => x !== d.rowId) : [...prev, d.rowId]
+                                  )}
+                                  className="mt-0.5 shrink-0 accent-rose-600"
+                                />
+                                <span className="text-xs text-gray-700 leading-snug">
+                                  <span className="font-semibold text-rose-600">{d.defectId}</span>
+                                  {d.summary && <span className="text-gray-500"> — {d.summary.length > 50 ? d.summary.slice(0, 50) + '…' : d.summary}</span>}
+                                </span>
+                              </label>
+                            ))}
+                        </div>
+                        <div className="flex items-center justify-between px-3 py-1.5 border-t border-gray-100 bg-gray-50 rounded-b-lg">
+                          <span className="text-xs text-gray-500">{bulkDefectIds.length} selected</span>
+                          <div className="flex gap-2">
+                            {bulkDefectIds.length > 0 && (
+                              <button onClick={() => setBulkDefectIds([])} className="text-xs text-red-500 hover:text-red-700">Clear</button>
+                            )}
+                            <button
+                              onClick={() => { setShowBulkDefectPicker(false); setBulkDefectSearch(''); }}
+                              className="text-xs text-gray-500 hover:text-gray-700"
+                            >
+                              Done
+                            </button>
+                          </div>
+                        </div>
+                      </div>,
+                      document.body
+                    )}
+                  </div>
+                )}
+
                 <button
-                  onClick={applyBulkStatus}
-                  disabled={!bulkStatus || bulkSaving}
+                  onClick={applyBulk}
+                  disabled={(!bulkStatus && bulkAssignee === '' && bulkDefectIds.length === 0) || bulkSaving}
                   className="text-xs font-medium bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded disabled:opacity-50 transition-colors"
                 >
                   {bulkSaving ? 'Saving…' : 'Apply'}
                 </button>
                 <button
-                  onClick={() => { setSelectedRowIds(new Set()); setBulkStatus(''); }}
+                  onClick={() => {
+                    setSelectedRowIds(new Set());
+                    setBulkStatus('');
+                    setBulkAssignee('');
+                    setBulkDefectIds([]);
+                    setShowBulkDefectPicker(false);
+                  }}
                   className="text-indigo-400 hover:text-indigo-600"
                 >
                   <X className="w-3.5 h-3.5" />
@@ -597,6 +898,58 @@ export default function ProjectTestCasesPage() {
             <span className="text-xs text-gray-400">{filteredRows.length} rows</span>
 
             <div className="flex items-center gap-2 ml-auto">
+              {/* Column visibility button */}
+              {sheet && (
+                <div className="relative" ref={colConfigRef}>
+                  <button
+                    onClick={() => setShowColConfig(v => !v)}
+                    className="flex items-center gap-1.5 text-xs font-medium text-gray-700 hover:text-indigo-700 border border-gray-300 hover:border-indigo-400 px-3 py-1.5 rounded-lg transition-colors"
+                  >
+                    <Columns className="w-3.5 h-3.5" /> Columns
+                  </button>
+                  {showColConfig && (
+                    <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-gray-200 rounded-lg shadow-lg p-3 w-60 max-h-80 overflow-y-auto">
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Data Columns</p>
+                      <div className="space-y-1 mb-3">
+                        {displayColumns.map(col => (
+                          <label key={col} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 rounded px-1 py-0.5">
+                            <input
+                              type="checkbox"
+                              checked={!hiddenColumns.has(col)}
+                              onChange={() => setHiddenColumns(prev => {
+                                const next = new Set(prev);
+                                next.has(col) ? next.delete(col) : next.add(col);
+                                return next;
+                              })}
+                              className="accent-indigo-600"
+                            />
+                            <span className="truncate">{col}</span>
+                          </label>
+                        ))}
+                      </div>
+                      <hr className="border-gray-200 mb-2" />
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Fixed Columns</p>
+                      <div className="space-y-1">
+                        {Object.entries(FIXED_COL_LABELS).map(([key, label]) => (
+                          <label key={key} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 rounded px-1 py-0.5">
+                            <input
+                              type="checkbox"
+                              checked={!hiddenColumns.has(key)}
+                              onChange={() => setHiddenColumns(prev => {
+                                const next = new Set(prev);
+                                next.has(key) ? next.delete(key) : next.add(key);
+                                return next;
+                              })}
+                              className="accent-indigo-600"
+                            />
+                            {label}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
               <button
                 onClick={exportToExcel}
                 className="flex items-center gap-1.5 text-xs font-medium text-gray-700 hover:text-green-700 border border-gray-300 hover:border-green-400 px-3 py-1.5 rounded-lg transition-colors"
@@ -633,15 +986,40 @@ export default function ProjectTestCasesPage() {
                     </th>
                   )}
                   <th className="sticky left-0 z-10 bg-gray-50 px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-10">#</th>
-                  {displayColumns.map((col: string) => (
+                  {visibleDisplayColumns.map((col: string) => (
                     <th
                       key={col}
+                      draggable
+                      onDragStart={() => { dragColRef.current = col; }}
+                      onDragOver={e => { e.preventDefault(); setDragOverCol(col); }}
+                      onDragLeave={() => setDragOverCol(null)}
+                      onDrop={() => {
+                        setDragOverCol(null);
+                        if (!dragColRef.current || dragColRef.current === col) return;
+                        const cols = [...orderedDisplayColumns];
+                        const from = cols.indexOf(dragColRef.current!);
+                        const to = cols.indexOf(col);
+                        if (from === -1 || to === -1) return;
+                        cols.splice(from, 1);
+                        cols.splice(to, 0, dragColRef.current!);
+                        setColumnOrder(cols);
+                        dragColRef.current = null;
+                      }}
                       style={{ width: colWidths[col], minWidth: colWidths[col] ?? 80 }}
-                      className="relative px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-100 transition-colors select-none"
-                      onClick={() => handleSort(col)}
+                      className={`relative px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-grab hover:bg-gray-100 transition-colors select-none ${dragOverCol === col ? 'bg-indigo-100 border-l-2 border-indigo-400' : ''}`}
                     >
-                      <div className="flex items-center gap-1 pr-2">{col}<SortIcon col={col} /></div>
+                      <div className="flex items-center gap-1 pr-2">
+                        {col}
+                        <button
+                          onClick={e => { e.stopPropagation(); handleSort(col); }}
+                          className="shrink-0 cursor-pointer hover:opacity-70"
+                          title="Sort"
+                        >
+                          <SortIcon col={col} />
+                        </button>
+                      </div>
                       <div
+                        draggable={false}
                         className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-indigo-400 transition-colors z-20"
                         onMouseDown={(e) => {
                           e.stopPropagation();
@@ -656,13 +1034,17 @@ export default function ProjectTestCasesPage() {
                       />
                     </th>
                   ))}
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap bg-indigo-50 sticky right-24 z-10 min-w-36">
-                    Assigned To
-                  </th>
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap bg-indigo-50 sticky right-0 z-10 min-w-36">
-                    Status
-                  </th>
-                  {defectDropdown.length > 0 && (
+                  {!hiddenColumns.has('__assigned__') && (
+                    <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap bg-indigo-50 sticky right-24 z-10 min-w-36">
+                      Assigned To
+                    </th>
+                  )}
+                  {!hiddenColumns.has('__status__') && (
+                    <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap bg-indigo-50 sticky right-0 z-10 min-w-36">
+                      Status
+                    </th>
+                  )}
+                  {defectDropdown.length > 0 && !hiddenColumns.has('__linked__') && (
                     <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap bg-rose-50 min-w-56">
                       <div className="flex items-center gap-1"><Bug className="w-3 h-3 text-rose-400" /> Linked Defects</div>
                     </th>
@@ -676,57 +1058,68 @@ export default function ProjectTestCasesPage() {
                 <tr className="bg-white border-b border-gray-100">
                   {isTesterOrOwner && <th className="sticky left-0 z-10 bg-white px-2 py-1" />}
                   <th className="sticky left-0 z-10 bg-white px-2 py-1" />
-                  {displayColumns.map((col: string) => (
+                  {visibleDisplayColumns.map((col: string) => (
                     <th key={col} style={{ width: colWidths[col], minWidth: colWidths[col] ?? 80 }} className="px-2 py-1">
-                      <input
-                        type="text"
-                        placeholder="Filter…"
-                        value={columnFilters[col] ?? ''}
-                        onChange={(e) => {
-                          setColumnFilters(prev => ({ ...prev, [col]: e.target.value }));
-                          setPage(0);
-                        }}
-                        className="w-full min-w-20 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 focus:border-indigo-400"
+                      <MultiSelectFilter
+                        options={(uniqueColValues[col] ?? []).map(v => ({ value: v, label: v }))}
+                        selected={columnFilters[col] ?? []}
+                        onChange={vals => { setColumnFilters(prev => ({ ...prev, [col]: vals })); setPage(0); }}
                       />
                     </th>
                   ))}
                   {/* Assigned To filter */}
-                  <th className="px-2 py-1 bg-indigo-50/50 sticky right-24 z-10 min-w-36">
-                    <select
-                      value={assigneeFilter}
-                      onChange={(e) => { setAssigneeFilter(e.target.value); setPage(0); }}
-                      className="w-full border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white"
-                    >
-                      <option value="">All</option>
-                      <option value="__unassigned__">Unassigned</option>
-                      {members
-                        .filter((m: ProjectMember) => m.role === 'TESTER' || m.role === 'OWNER')
-                        .map((m: ProjectMember) => (
-                          <option key={m.userId} value={m.userId}>{m.username}</option>
-                        ))}
-                    </select>
-                  </th>
+                  {!hiddenColumns.has('__assigned__') && (
+                    <th className="px-2 py-1 bg-indigo-50/50 sticky right-24 z-10 min-w-36">
+                      <MultiSelectFilter
+                        options={[
+                          { value: '__unassigned__', label: 'Unassigned' },
+                          ...members
+                            .filter((m: ProjectMember) => m.role === 'TESTER' || m.role === 'OWNER')
+                            .map((m: ProjectMember) => ({ value: String(m.userId), label: m.username })),
+                        ]}
+                        selected={assigneeFilter}
+                        onChange={vals => { setAssigneeFilter(vals); setPage(0); }}
+                      />
+                    </th>
+                  )}
                   {/* Status filter */}
-                  <th className="px-2 py-1 bg-indigo-50/50 sticky right-0 z-10 min-w-36">
-                    <select
-                      value={statusFilter}
-                      onChange={(e) => { setStatusFilter(e.target.value as RowStatus | ''); setPage(0); }}
-                      className="w-full border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white"
-                    >
-                      <option value="">All statuses</option>
-                      {ALL_STATUSES.map(s => (
-                        <option key={s} value={s}>{STATUS_LABELS[s]}</option>
-                      ))}
-                    </select>
-                  </th>
-                  {defectDropdown.length > 0 && <th className="px-2 py-1 bg-rose-50/50" />}
+                  {!hiddenColumns.has('__status__') && (
+                    <th className="px-2 py-1 bg-indigo-50/50 sticky right-0 z-10 min-w-36">
+                      <MultiSelectFilter
+                        options={ALL_STATUSES.map(s => ({ value: s, label: STATUS_LABELS[s] }))}
+                        selected={statusFilter}
+                        onChange={vals => { setStatusFilter(vals as RowStatus[]); setPage(0); }}
+                      />
+                    </th>
+                  )}
+                  {defectDropdown.length > 0 && !hiddenColumns.has('__linked__') && (
+                    <th className="px-2 py-1 bg-rose-50/50">
+                      <MultiSelectFilter
+                        accent="rose"
+                        options={defectDropdown.map((d: DropdownItem) => ({ value: String(d.rowId), label: d.defectId }))}
+                        selected={linkedDefectFilter.map(String)}
+                        onChange={vals => {
+                          setLinkedDefectFilter(vals.map(Number));
+                          if (!vals.length) setSearchParams({});
+                          setPage(0);
+                        }}
+                      />
+                    </th>
+                  )}
                   <th className="px-2 py-1" />
                 </tr>
               </thead>
               <tbody>
                 {pageRows.length === 0 ? (
                   <tr>
-                    <td colSpan={displayColumns.length + 5 + (defectDropdown.length > 0 ? 1 : 0) + (isTesterOrOwner ? 1 : 0)} className="text-center py-12 text-gray-400">
+                    <td colSpan={
+                      visibleDisplayColumns.length
+                      + 2 // # and Detail
+                      + (isTesterOrOwner ? 1 : 0) // checkbox
+                      + (!hiddenColumns.has('__assigned__') ? 1 : 0)
+                      + (!hiddenColumns.has('__status__') ? 1 : 0)
+                      + (defectDropdown.length > 0 && !hiddenColumns.has('__linked__') ? 1 : 0)
+                    } className="text-center py-12 text-gray-400">
                       No rows match your search
                     </td>
                   </tr>
@@ -799,7 +1192,7 @@ export default function ProjectTestCasesPage() {
                         </td>
 
                         {/* Data cells */}
-                        {displayColumns.map((col: string) => {
+                        {visibleDisplayColumns.map((col: string) => {
                           const currentVal = rowCellEdits[col] !== undefined ? rowCellEdits[col] : (row.data[col] ?? '');
                           return (
                             <td key={col} style={{ width: colWidths[col], maxWidth: colWidths[col] ?? undefined }} className="px-2 py-1.5 text-gray-700 overflow-hidden">
@@ -825,6 +1218,7 @@ export default function ProjectTestCasesPage() {
                         })}
 
                         {/* Assigned To */}
+                        {!hiddenColumns.has('__assigned__') && (
                         <td className="px-3 py-2 sticky right-24 z-10 bg-inherit min-w-36">
                           {isOwner ? (
                             <select
@@ -854,8 +1248,10 @@ export default function ProjectTestCasesPage() {
                             </span>
                           )}
                         </td>
+                        )}
 
                         {/* Status + save button */}
+                        {!hiddenColumns.has('__status__') && (
                         <td className="px-3 py-2 sticky right-0 z-10 bg-inherit min-w-36">
                           <div className="flex items-center gap-1.5">
                             {isTesterOrOwner ? (
@@ -889,9 +1285,10 @@ export default function ProjectTestCasesPage() {
                             )}
                           </div>
                         </td>
+                        )}
 
                         {/* Linked Defects */}
-                        {defectDropdown.length > 0 && (() => {
+                        {defectDropdown.length > 0 && !hiddenColumns.has('__linked__') && (() => {
                           const currentLinked: number[] = pendingDefects[row.rowId] !== undefined
                             ? pendingDefects[row.rowId]
                             : (row.linkedDefectIds ?? []);

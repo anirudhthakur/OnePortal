@@ -34,6 +34,9 @@ public class DefectRow {
     @Column(columnDefinition = "TEXT", nullable = false)
     private String rowData;
 
+    @Column(columnDefinition = "TEXT")
+    private String comments;
+
     @Column
     private LocalDateTime updatedAt;
 

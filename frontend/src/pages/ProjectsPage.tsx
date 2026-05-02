@@ -1,9 +1,8 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { FolderKanban, Plus, Users, ChevronRight, Trash2, AlertCircle, X, Upload, FileSpreadsheet } from 'lucide-react';
+import { FolderKanban, Plus, Users, ChevronRight, Trash2, AlertCircle, X } from 'lucide-react';
 import { getAllProjects, createProject, deleteProject } from '../api/projectApi';
-import { uploadExcel } from '../api/excelApi';
 import { useCurrentUser } from '../context/UserContext';
 import type { Project } from '../types/project';
 
@@ -20,9 +19,7 @@ export default function ProjectsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [excelFile, setExcelFile] = useState<File | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: projects = [], isLoading, isError } = useQuery({
     queryKey: ['projects'],
@@ -32,16 +29,12 @@ export default function ProjectsPage() {
   const createMutation = useMutation({
     mutationFn: async () => {
       if (!currentUser) throw new Error('No user selected');
-      const project = await createProject(currentUser.id, { name, description });
-      if (excelFile) {
-        await uploadExcel(excelFile, currentUser.id, project.id);
-      }
-      return project;
+      return await createProject(currentUser.id, { name, description });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['projects'] });
       setShowCreateModal(false);
-      setName(''); setDescription(''); setExcelFile(null); setFormError(null);
+      setName(''); setDescription(''); setFormError(null);
     },
     onError: (err: Error) => setFormError(err.message || 'Failed to create project'),
   });
@@ -63,18 +56,6 @@ export default function ProjectsPage() {
     if (!currentUser) { setFormError('Please select your user in the top-right before creating a project'); return; }
     setFormError(null);
     createMutation.mutate();
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (f) {
-      if (!f.name.toLowerCase().endsWith('.xlsx')) {
-        setFormError('Only .xlsx files are supported');
-        return;
-      }
-      setExcelFile(f);
-      setFormError(null);
-    }
   };
 
   return (
@@ -152,7 +133,7 @@ export default function ProjectsPage() {
           <div className="bg-white rounded-xl p-6 shadow-xl w-full max-w-md mx-4">
             <div className="flex items-center justify-between mb-5">
               <h3 className="text-base font-semibold text-gray-800">New Project</h3>
-              <button onClick={() => { setShowCreateModal(false); setFormError(null); setExcelFile(null); }} className="text-gray-400 hover:text-gray-600">
+              <button onClick={() => { setShowCreateModal(false); setFormError(null); }} className="text-gray-400 hover:text-gray-600">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -166,37 +147,6 @@ export default function ProjectsPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
                 <textarea value={description} onChange={e => setDescription(e.target.value)} rows={3} placeholder="Optional description..."
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none" />
-              </div>
-
-              {/* Excel Upload */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Test Design File <span className="text-gray-400 font-normal">(optional, .xlsx)</span>
-                </label>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".xlsx"
-                  onChange={handleFileChange}
-                  className="hidden"
-                />
-                {excelFile ? (
-                  <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
-                    <FileSpreadsheet className="w-4 h-4 text-green-600 shrink-0" />
-                    <span className="text-sm text-green-800 flex-1 truncate">{excelFile.name}</span>
-                    <button onClick={() => { setExcelFile(null); if (fileInputRef.current) fileInputRef.current.value = ''; }}
-                      className="text-gray-400 hover:text-red-500 transition-colors">
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                ) : (
-                  <button onClick={() => fileInputRef.current?.click()}
-                    className="w-full flex items-center justify-center gap-2 border-2 border-dashed border-gray-300 hover:border-indigo-400 rounded-lg px-3 py-3 text-sm text-gray-500 hover:text-indigo-600 transition-colors">
-                    <Upload className="w-4 h-4" />
-                    Click to upload Excel file
-                  </button>
-                )}
-                <p className="text-xs text-gray-400 mt-1">Rows from the Excel will become the project's test design.</p>
               </div>
 
               {/* Current user display */}
@@ -218,7 +168,7 @@ export default function ProjectsPage() {
               )}
             </div>
             <div className="flex gap-3 mt-6">
-              <button onClick={() => { setShowCreateModal(false); setFormError(null); setExcelFile(null); }} className="flex-1 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+              <button onClick={() => { setShowCreateModal(false); setFormError(null); }} className="flex-1 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
               <button onClick={handleCreate} disabled={createMutation.isPending}
                 className="flex-1 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg disabled:opacity-50">
                 {createMutation.isPending ? 'Creating...' : 'Create Project'}

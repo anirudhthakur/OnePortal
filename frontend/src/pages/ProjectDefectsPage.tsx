@@ -1,11 +1,12 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ChevronRight, Search, ArrowUpDown, ArrowUp, ArrowDown,
   ChevronLeft, ChevronRight as ChevronRightIcon,
   Bug, AlertCircle, Download, Plus, Trash2, CheckCircle,
-  X, ChevronDown, Filter, Maximize2, Clock, FlaskConical,
+  X, ChevronDown, Filter, Maximize2, Clock, FlaskConical, Columns,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import {
@@ -21,6 +22,88 @@ import type { DefectRowResponse } from '../types/defect';
 import type { DropdownItem } from '../types/defect';
 
 type SortDir = 'asc' | 'desc' | null;
+
+function MultiSelectFilter({
+  options,
+  selected,
+  onChange,
+  accent = 'rose',
+}: {
+  options: { value: string; label: string }[];
+  selected: string[];
+  onChange: (vals: string[]) => void;
+  accent?: 'indigo' | 'rose';
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const dropRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (dropRef.current && !dropRef.current.contains(e.target as Node) &&
+          btnRef.current && !btnRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const handleOpen = () => {
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom, left: r.left, width: Math.max(r.width, 150) });
+    }
+    setOpen(p => !p);
+  };
+
+  const toggle = (val: string) =>
+    onChange(selected.includes(val) ? selected.filter(v => v !== val) : [...selected, val]);
+  const label =
+    selected.length === 0 ? 'All'
+    : selected.length === 1 ? (options.find(o => o.value === selected[0])?.label ?? selected[0])
+    : `${selected.length} selected`;
+  const ringCls = accent === 'rose' ? 'hover:border-rose-400' : 'hover:border-indigo-400';
+  const textCls = accent === 'rose' ? 'text-rose-600' : 'text-indigo-600';
+  const checkCls = accent === 'rose' ? 'accent-rose-500' : 'accent-indigo-500';
+  return (
+    <div className="relative w-full">
+      <button
+        ref={btnRef}
+        onClick={handleOpen}
+        className={`w-full flex items-center justify-between min-w-20 border border-gray-200 rounded px-2 py-1 text-xs bg-white focus:outline-none transition-colors ${ringCls}`}
+      >
+        <span className={`truncate ${selected.length > 0 ? `${textCls} font-medium` : 'text-gray-500'}`}>{label}</span>
+        <ChevronDown className="w-3 h-3 text-gray-400 shrink-0 ml-1" />
+      </button>
+      {open && createPortal(
+        <div
+          ref={dropRef}
+          style={{ position: 'fixed', top: pos.top + 2, left: pos.left, width: pos.width, zIndex: 9999 }}
+          className="bg-white border border-gray-200 rounded shadow-lg max-h-52 overflow-y-auto"
+        >
+          {selected.length > 0 && (
+            <button
+              onClick={() => { onChange([]); setOpen(false); }}
+              className="w-full text-left px-3 py-1.5 text-xs text-red-500 hover:bg-red-50 border-b border-gray-100"
+            >
+              Clear
+            </button>
+          )}
+          {options.map(opt => (
+            <label key={opt.value} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer">
+              <input type="checkbox" checked={selected.includes(opt.value)} onChange={() => toggle(opt.value)} className={checkCls} />
+              <span className="text-xs text-gray-700 truncate">{opt.label}</span>
+            </label>
+          ))}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100];
 
@@ -59,12 +142,20 @@ export default function ProjectDefectsPage() {
   const [pageSize, setPageSize] = useState(50);
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>(null);
-  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
+  const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
 
   // CRUD state
   const [pendingCells, setPendingCells] = useState<Record<number, Record<string, string>>>({});
   const [savingRows, setSavingRows] = useState<Set<number>>(new Set());
+  const [pendingComments, setPendingComments] = useState<Record<number, string>>({});
+  const [savingComments, setSavingComments] = useState<Set<number>>(new Set());
   const [deleteConfirmRow, setDeleteConfirmRow] = useState<DefectRowResponse | null>(null);
+  const [closeConfirmContext, setCloseConfirmContext] = useState<{
+    row: DefectRowResponse;
+    mergedRowData: Record<string, string>;
+    newDefectId: string;
+    newSummary: string;
+  } | null>(null);
 
   // Detail panel
   const [expandedRow, setExpandedRow] = useState<DefectRowResponse | null>(null);
@@ -72,6 +163,16 @@ export default function ProjectDefectsPage() {
   // Column resize state
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
   const resizeRef = useRef<{ col: string; startX: number; startWidth: number } | null>(null);
+
+  // Column reorder state
+  const [columnOrder, setColumnOrder] = useState<string[]>([]);
+  const [dragOverCol, setDragOverCol] = useState<string | null>(null);
+  const dragColRef = useRef<string | null>(null);
+
+  // Column visibility state
+  const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set());
+  const [showColConfig, setShowColConfig] = useState(false);
+  const colConfigRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
@@ -88,6 +189,17 @@ export default function ProjectDefectsPage() {
       window.removeEventListener('mouseup', onMouseUp);
     };
   }, []);
+
+  // Close column config dropdown when clicking outside
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (colConfigRef.current && !colConfigRef.current.contains(e.target as Node)) {
+        setShowColConfig(false);
+      }
+    };
+    if (showColConfig) document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showColConfig]);
 
   const { data: project } = useQuery({
     queryKey: ['project', id],
@@ -132,6 +244,56 @@ export default function ProjectDefectsPage() {
   const myRole: ProjectRole | null = myMembership?.role ?? null;
   const isTesterOrOwner = myRole === 'OWNER' || myRole === 'TESTER';
 
+  // Seed column order when a new sheet is loaded; preserve user's reordering on re-renders
+  useEffect(() => {
+    if (defectPage?.columns?.length) {
+      setColumnOrder(prev => {
+        const incoming = [...defectPage.columns, '__comments__', '__linked__'];
+        const known = new Set(prev);
+        const extra = incoming.filter(c => !known.has(c));
+        const pruned = prev.filter(c => incoming.includes(c));
+        return [...pruned, ...extra];
+      });
+    }
+  }, [defectPage?.sheetId]);
+
+  // Columns in user-defined order (falls back to server order on first load)
+  const orderedColumns = useMemo(() => {
+    if (!defectPage?.columns?.length) return [];
+    const allCols = [...defectPage.columns, '__comments__', '__linked__'];
+    if (!columnOrder.length) return allCols;
+    const set = new Set(allCols);
+    return [
+      ...columnOrder.filter(c => set.has(c)),
+      ...allCols.filter(c => !columnOrder.includes(c)),
+    ];
+  }, [columnOrder, defectPage?.columns]);
+
+  // Columns actually rendered — hidden ones excluded but kept in order
+  const visibleColumns = useMemo(
+    () => orderedColumns.filter(c => !hiddenColumns.has(c)),
+    [orderedColumns, hiddenColumns]
+  );
+
+  const uniqueColValues: Record<string, string[]> = useMemo(() => {
+    if (!defectPage) return {};
+    const map: Record<string, Set<string>> = {};
+    for (const row of defectPage.rows) {
+      for (const col of (defectPage.columns ?? [])) {
+        const val = (row.data[col] ?? '').trim();
+        if (val) {
+          if (!map[col]) map[col] = new Set();
+          map[col].add(val);
+        }
+      }
+    }
+    const result: Record<string, string[]> = {};
+    for (const col of (defectPage?.columns ?? [])) {
+      result[col] = map[col] ? Array.from(map[col]).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) : [];
+    }
+    return result;
+  }, [defectPage]);
+
   // Build a map: defectRowId -> number of test rows that reference it
   const linkedTestCounts = useMemo<Record<number, number>>(() => {
     if (!testSheet?.rows) return {};
@@ -147,7 +309,7 @@ export default function ProjectDefectsPage() {
   const isLoading = loadingSummary || loadingRows;
 
   const activeFilterCount = useMemo(
-    () => Object.values(columnFilters).filter(v => v.trim() !== '').length + (search.trim() ? 1 : 0),
+    () => Object.values(columnFilters).filter(v => v.length > 0).length + (search.trim() ? 1 : 0),
     [columnFilters, search]
   );
 
@@ -169,12 +331,9 @@ export default function ProjectDefectsPage() {
       : [...defectPage.rows];
 
     // Apply per-column filters
-    for (const [col, val] of Object.entries(columnFilters)) {
-      if (!val.trim()) continue;
-      const lv = val.toLowerCase();
-      rows = rows.filter((row: DefectRowResponse) =>
-        (row.data[col] ?? '').toLowerCase().includes(lv)
-      );
+    for (const [col, vals] of Object.entries(columnFilters)) {
+      if (!vals.length) continue;
+      rows = rows.filter((row: DefectRowResponse) => vals.includes(row.data[col] ?? ''));
     }
 
     if (sortCol && sortDir) {
@@ -202,18 +361,19 @@ export default function ProjectDefectsPage() {
   };
 
   // Save row changes
-  const saveRowChanges = async (row: DefectRowResponse) => {
+  const executeRowSave = async (
+    row: DefectRowResponse,
+    mergedRowData: Record<string, string>,
+    newDefectId: string,
+    newSummary: string,
+  ) => {
     if (!currentUser || !sheetSummary) return;
-    const cellEdits = pendingCells[row.rowId];
-    if (!cellEdits || Object.keys(cellEdits).length === 0) return;
-
-    const mergedRowData = { ...row.data, ...cellEdits };
     setSavingRows(prev => new Set(prev).add(row.rowId));
     try {
       await updateDefectRow(sheetSummary.sheetId, row.rowId, currentUser.id, {
         rowData: mergedRowData,
-        defectId: cellEdits[sheetSummary.idColumnName] ?? row.defectId,
-        summary: cellEdits[sheetSummary.summaryColumnName] ?? row.summary ?? '',
+        defectId: newDefectId,
+        summary: newSummary,
       });
       queryClient.invalidateQueries({ queryKey: ['defectRows', sheetSummary.sheetId] });
       queryClient.invalidateQueries({ queryKey: ['defectDropdown', id] });
@@ -222,6 +382,74 @@ export default function ProjectDefectsPage() {
       alert(err instanceof Error ? err.message : 'Failed to save');
     } finally {
       setSavingRows(prev => { const n = new Set(prev); n.delete(row.rowId); return n; });
+    }
+  };
+
+  const saveRowChanges = async (row: DefectRowResponse) => {
+    if (!currentUser || !sheetSummary) return;
+    const cellEdits = pendingCells[row.rowId];
+    if (!cellEdits || Object.keys(cellEdits).length === 0) return;
+
+    const mergedRowData = { ...row.data, ...cellEdits };
+    const newDefectId = cellEdits[sheetSummary.idColumnName] ?? row.defectId;
+    const newSummary = cellEdits[sheetSummary.summaryColumnName] ?? row.summary ?? '';
+
+    // Show confirmation when status is being changed to "Closed" and there are linked test cases
+    const statusCol = sheetSummary.statusColumnName;
+    const linkedCount = linkedTestCounts[row.rowId] ?? 0;
+    if (
+      statusCol &&
+      cellEdits[statusCol] !== undefined &&
+      cellEdits[statusCol].toLowerCase() === 'closed' &&
+      linkedCount > 0
+    ) {
+      setCloseConfirmContext({ row, mergedRowData, newDefectId, newSummary });
+      return;
+    }
+
+    await executeRowSave(row, mergedRowData, newDefectId, newSummary);
+  };
+
+  const handleCloseConfirmYes = async () => {
+    if (!closeConfirmContext) return;
+    const { row, mergedRowData, newDefectId, newSummary } = closeConfirmContext;
+    setCloseConfirmContext(null);
+    await executeRowSave(row, mergedRowData, newDefectId, newSummary);
+  };
+
+  const handleCloseConfirmNo = () => {
+    if (!closeConfirmContext || !sheetSummary?.statusColumnName) {
+      setCloseConfirmContext(null);
+      return;
+    }
+    // Revert the status cell edit — leave other pending changes intact
+    const { row } = closeConfirmContext;
+    setPendingCells(prev => {
+      const rowEdits = { ...(prev[row.rowId] ?? {}) };
+      delete rowEdits[sheetSummary.statusColumnName!];
+      if (Object.keys(rowEdits).length === 0) {
+        const n = { ...prev };
+        delete n[row.rowId];
+        return n;
+      }
+      return { ...prev, [row.rowId]: rowEdits };
+    });
+    setCloseConfirmContext(null);
+  };
+
+  const saveComment = async (row: DefectRowResponse) => {
+    if (!currentUser || !sheetSummary) return;
+    const comment = pendingComments[row.rowId];
+    if (comment === undefined) return;
+    setSavingComments(prev => new Set(prev).add(row.rowId));
+    try {
+      await updateDefectRow(sheetSummary.sheetId, row.rowId, currentUser.id, { comments: comment });
+      queryClient.invalidateQueries({ queryKey: ['defectRows', sheetSummary.sheetId] });
+      setPendingComments(prev => { const n = { ...prev }; delete n[row.rowId]; return n; });
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Failed to save comment');
+    } finally {
+      setSavingComments(prev => { const n = new Set(prev); n.delete(row.rowId); return n; });
     }
   };
 
@@ -385,6 +613,58 @@ export default function ProjectDefectsPage() {
           <span className="text-xs text-gray-400">{filteredRows.length} defects</span>
 
           <div className="flex items-center gap-2 ml-auto">
+            {/* Column visibility button */}
+            {defectPage && (
+              <div className="relative" ref={colConfigRef}>
+                <button
+                  onClick={() => setShowColConfig(v => !v)}
+                  className="flex items-center gap-1.5 text-xs font-medium text-gray-700 hover:text-rose-700 border border-gray-300 hover:border-rose-400 px-3 py-1.5 rounded-lg transition-colors"
+                >
+                  <Columns className="w-3.5 h-3.5" /> Columns
+                </button>
+                {showColConfig && (
+                  <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-gray-200 rounded-lg shadow-lg p-3 w-60 max-h-80 overflow-y-auto">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Data Columns</p>
+                    <div className="space-y-1 mb-3">
+                      {defectPage.columns.map(col => (
+                        <label key={col} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 rounded px-1 py-0.5">
+                          <input
+                            type="checkbox"
+                            checked={!hiddenColumns.has(col)}
+                            onChange={() => setHiddenColumns(prev => {
+                              const next = new Set(prev);
+                              next.has(col) ? next.delete(col) : next.add(col);
+                              return next;
+                            })}
+                            className="accent-rose-600"
+                          />
+                          <span className="truncate">{col}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <hr className="border-gray-200 mb-2" />
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Special Columns</p>
+                    <div className="space-y-1">
+                      {[['__comments__', 'Comments'], ['__linked__', 'Linked Tests']].map(([key, label]) => (
+                        <label key={key} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 rounded px-1 py-0.5">
+                          <input
+                            type="checkbox"
+                            checked={!hiddenColumns.has(key)}
+                            onChange={() => setHiddenColumns(prev => {
+                              const next = new Set(prev);
+                              next.has(key) ? next.delete(key) : next.add(key);
+                              return next;
+                            })}
+                            className="accent-rose-600"
+                          />
+                          {label}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
             <button
               onClick={exportToExcel}
               className="flex items-center gap-1.5 text-xs font-medium text-gray-700 hover:text-green-700 border border-gray-300 hover:border-green-400 px-3 py-1.5 rounded-lg transition-colors"
@@ -409,15 +689,83 @@ export default function ProjectDefectsPage() {
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
                 <th className="sticky left-0 z-10 bg-gray-50 px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-10">#</th>
-                {(defectPage?.columns ?? []).map((col: string) => (
+                {visibleColumns.map((col: string) => {
+                  const dragProps = {
+                    draggable: true,
+                    onDragStart: () => { dragColRef.current = col; },
+                    onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOverCol(col); },
+                    onDragLeave: () => setDragOverCol(null),
+                    onDrop: () => {
+                      setDragOverCol(null);
+                      if (!dragColRef.current || dragColRef.current === col) return;
+                      const cols = [...orderedColumns];
+                      const from = cols.indexOf(dragColRef.current!);
+                      const to = cols.indexOf(col);
+                      if (from === -1 || to === -1) return;
+                      cols.splice(from, 1);
+                      cols.splice(to, 0, dragColRef.current!);
+                      setColumnOrder(cols);
+                      dragColRef.current = null;
+                    },
+                  };
+                  const dropHighlight = dragOverCol === col ? 'border-l-2 border-rose-400 bg-rose-100' : '';
+
+                  if (col === '__comments__') return (
+                    <th key={col} {...dragProps}
+                      style={{ width: colWidths['__comments__'], minWidth: colWidths['__comments__'] ?? 160, position: 'relative' }}
+                      className={`px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide bg-amber-50 cursor-grab select-none ${dropHighlight}`}>
+                      Comments
+                      <div draggable={false}
+                        className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-amber-400 transition-colors z-20"
+                        onMouseDown={(e) => {
+                          e.stopPropagation(); e.preventDefault();
+                          const th = e.currentTarget.closest('th') as HTMLElement;
+                          resizeRef.current = { col: '__comments__', startX: e.clientX, startWidth: colWidths['__comments__'] ?? th.getBoundingClientRect().width };
+                        }} />
+                    </th>
+                  );
+
+                  if (col === '__linked__') return (
+                    <th key={col} {...dragProps}
+                      className={`px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap bg-rose-50 min-w-24 cursor-grab select-none ${dropHighlight}`}>
+                      Linked Tests
+                    </th>
+                  );
+
+                  return (
                   <th
                     key={col}
+                    draggable
+                    onDragStart={() => { dragColRef.current = col; }}
+                    onDragOver={e => { e.preventDefault(); setDragOverCol(col); }}
+                    onDragLeave={() => setDragOverCol(null)}
+                    onDrop={() => {
+                      setDragOverCol(null);
+                      if (!dragColRef.current || dragColRef.current === col) return;
+                      const cols = [...orderedColumns];
+                      const from = cols.indexOf(dragColRef.current!);
+                      const to = cols.indexOf(col);
+                      if (from === -1 || to === -1) return;
+                      cols.splice(from, 1);
+                      cols.splice(to, 0, dragColRef.current!);
+                      setColumnOrder(cols);
+                      dragColRef.current = null;
+                    }}
                     style={{ width: colWidths[col], minWidth: colWidths[col] ?? 80 }}
-                    className="relative px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-100 transition-colors select-none"
-                    onClick={() => handleSort(col)}
+                    className={`relative px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-grab hover:bg-gray-100 transition-colors select-none ${dragOverCol === col ? 'bg-rose-100 border-l-2 border-rose-400' : ''}`}
                   >
-                    <div className="flex items-center gap-1 pr-2">{col}<SortIcon col={col} /></div>
+                    <div className="flex items-center gap-1 pr-2">
+                      {col}
+                      <button
+                        onClick={e => { e.stopPropagation(); handleSort(col); }}
+                        className="shrink-0 cursor-pointer hover:opacity-70"
+                        title="Sort"
+                      >
+                        <SortIcon col={col} />
+                      </button>
+                    </div>
                     <div
+                      draggable={false}
                       className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-rose-400 transition-colors z-20"
                       onMouseDown={(e) => {
                         e.stopPropagation();
@@ -431,10 +779,11 @@ export default function ProjectDefectsPage() {
                       }}
                     />
                   </th>
-                ))}
-                <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap bg-rose-50 min-w-24">
-                  Linked Tests
-                </th>
+                  );
+                })}
+                {isTesterOrOwner && (
+                  <th className="px-2 py-3 w-10" />
+                )}
                 <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap w-16">
                   Detail
                 </th>
@@ -442,28 +791,26 @@ export default function ProjectDefectsPage() {
               {/* Column filter row */}
               <tr className="bg-white border-b border-gray-100">
                 <th className="sticky left-0 z-10 bg-white px-2 py-1" />
-                {(defectPage?.columns ?? []).map((col: string) => (
-                  <th key={col} style={{ width: colWidths[col], minWidth: colWidths[col] ?? 80 }} className="px-2 py-1">
-                    <input
-                      type="text"
-                      placeholder={`Filter…`}
-                      value={columnFilters[col] ?? ''}
-                      onChange={(e) => {
-                        setColumnFilters(prev => ({ ...prev, [col]: e.target.value }));
-                        setPage(0);
-                      }}
-                      className="w-full min-w-20 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-rose-400 focus:border-rose-400"
-                    />
-                  </th>
-                ))}
-                <th className="px-2 py-1" />
+                {visibleColumns.map((col: string) => {
+                  if (col === '__comments__') return <th key={col} className="px-2 py-1 bg-amber-50/50" />;
+                  if (col === '__linked__')   return <th key={col} className="px-2 py-1 bg-rose-50/50" />;
+                  return (
+                    <th key={col} style={{ width: colWidths[col], minWidth: colWidths[col] ?? 80 }} className="px-2 py-1">
+                      <MultiSelectFilter
+                        options={(uniqueColValues[col] ?? []).map(v => ({ value: v, label: v }))}
+                        selected={columnFilters[col] ?? []}
+                        onChange={vals => { setColumnFilters(prev => ({ ...prev, [col]: vals })); setPage(0); }}
+                      />
+                    </th>
+                  );
+                })}
                 <th className="px-2 py-1" />
               </tr>
             </thead>
             <tbody>
               {pageRows.length === 0 ? (
                 <tr>
-                  <td colSpan={(defectPage?.columns.length ?? 0) + 3} className="text-center py-12 text-gray-400">
+                  <td colSpan={visibleColumns.length + 3 + (isTesterOrOwner ? 1 : 0)} className="text-center py-12 text-gray-400">
                     No defects match your search
                   </td>
                 </tr>
@@ -509,7 +856,61 @@ export default function ProjectDefectsPage() {
                       </td>
 
                       {/* Data cells */}
-                      {(defectPage?.columns ?? []).map((col: string) => {
+                      {visibleColumns.map((col: string) => {
+                        // ── Comments virtual column ──────────────────────────
+                        if (col === '__comments__') return (
+                          <td key={col} style={{ width: colWidths['__comments__'], maxWidth: colWidths['__comments__'] ?? undefined }}
+                            className="px-2 py-1.5 bg-amber-50/30 align-top">
+                            {isTesterOrOwner ? (
+                              <div className="flex flex-col gap-1">
+                                <textarea
+                                  value={pendingComments[row.rowId] !== undefined ? pendingComments[row.rowId] : (row.comments ?? '')}
+                                  onChange={e => {
+                                    setPendingComments(prev => ({ ...prev, [row.rowId]: e.target.value }));
+                                    e.target.style.height = 'auto';
+                                    e.target.style.height = `${e.target.scrollHeight}px`;
+                                  }}
+                                  onFocus={e => {
+                                    e.target.style.height = 'auto';
+                                    e.target.style.height = `${e.target.scrollHeight}px`;
+                                  }}
+                                  disabled={savingComments.has(row.rowId)}
+                                  placeholder="Add comment…"
+                                  rows={1}
+                                  className="w-full border border-transparent hover:border-amber-300 focus:border-amber-400 focus:outline-none bg-transparent text-xs resize-none overflow-hidden rounded px-1 py-0.5 placeholder:text-amber-300 transition-colors"
+                                />
+                                {pendingComments[row.rowId] !== undefined && (
+                                  <button onClick={() => saveComment(row)} disabled={savingComments.has(row.rowId)}
+                                    className="self-end px-2 py-0.5 text-xs bg-amber-500 hover:bg-amber-600 text-white rounded disabled:opacity-50">
+                                    {savingComments.has(row.rowId) ? 'Saving…' : 'Save'}
+                                  </button>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-xs text-gray-600 whitespace-pre-wrap">{row.comments ?? ''}</span>
+                            )}
+                          </td>
+                        );
+
+                        // ── Linked Tests virtual column ───────────────────────
+                        if (col === '__linked__') {
+                          const count = linkedTestCounts[row.rowId] ?? 0;
+                          return (
+                            <td key={col} className="px-3 py-2 bg-inherit min-w-24">
+                              {count > 0 ? (
+                                <Link to={`/projects/${id}/test-cases?defectRowId=${row.rowId}`}
+                                  className="inline-flex items-center gap-1 text-xs font-medium bg-indigo-100 text-indigo-700 hover:bg-indigo-200 px-2 py-0.5 rounded-full transition-colors"
+                                  title={`${count} test case${count !== 1 ? 's' : ''} linked to this defect`}>
+                                  <FlaskConical className="w-3 h-3" /> {count} test{count !== 1 ? 's' : ''}
+                                </Link>
+                              ) : (
+                                <span className="text-xs text-gray-400">—</span>
+                              )}
+                            </td>
+                          );
+                        }
+
+                        // ── Regular data column ───────────────────────────────
                         const currentVal = rowCellEdits[col] !== undefined ? rowCellEdits[col] : (row.data[col] ?? '');
                         return (
                           <td key={col} style={{ width: colWidths[col], maxWidth: colWidths[col] ?? undefined }} className="px-2 py-1.5 text-gray-700 overflow-hidden">
@@ -528,18 +929,7 @@ export default function ProjectDefectsPage() {
                                   disabled={isSaving}
                                   className="w-full min-w-0 border-0 border-b border-transparent hover:border-gray-300 focus:border-rose-400 focus:outline-none bg-transparent text-sm py-0.5 transition-colors"
                                 />
-                                {hasPendingChanges && col === defectPage?.columns[defectPage.columns.length - 1] && (
-                                  <button
-                                    onClick={() => saveRowChanges(row)}
-                                    disabled={isSaving}
-                                    className="shrink-0 p-1 bg-rose-600 hover:bg-rose-700 text-white rounded disabled:opacity-50"
-                                    title="Save changes"
-                                  >
-                                    {isSaving
-                                      ? <svg className="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" /></svg>
-                                      : <CheckCircle className="w-3 h-3" />}
-                                  </button>
-                                )}
+
                               </div>
                             ) : (
                               <span className="text-sm truncate block" title={row.data[col]}>{row.data[col] ?? ''}</span>
@@ -548,29 +938,23 @@ export default function ProjectDefectsPage() {
                         );
                       })}
 
-                      {/* Save button in last non-data column if tester/owner */}
-                      {isTesterOrOwner && hasPendingChanges && (
-                        <td className="px-2 py-1.5 bg-rose-50 min-w-24 text-center" />
-                      )}
-
-                      {/* Linked Tests */}
-                      <td className="px-3 py-2 bg-inherit min-w-24">
-                        {(() => {
-                          const count = linkedTestCounts[row.rowId] ?? 0;
-                          return count > 0 ? (
-                            <Link
-                              to={`/projects/${id}/test-cases?defectRowId=${row.rowId}`}
-                              className="inline-flex items-center gap-1 text-xs font-medium bg-indigo-100 text-indigo-700 hover:bg-indigo-200 px-2 py-0.5 rounded-full transition-colors"
-                              title={`${count} test case${count !== 1 ? 's' : ''} linked to this defect`}
+                      {/* Save row changes button */}
+                      {isTesterOrOwner && (
+                        <td className="px-2 py-2 bg-inherit w-10">
+                          {hasPendingChanges && (
+                            <button
+                              onClick={() => saveRowChanges(row)}
+                              disabled={isSaving}
+                              className="p-1 bg-rose-600 hover:bg-rose-700 text-white rounded disabled:opacity-50"
+                              title="Save changes"
                             >
-                              <FlaskConical className="w-3 h-3" /> {count} test{count !== 1 ? 's' : ''}
-                            </Link>
-                          ) : (
-                            <span className="text-xs text-gray-400">—</span>
-                          );
-                        })()}
-                      </td>
-
+                              {isSaving
+                                ? <svg className="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" /></svg>
+                                : <CheckCircle className="w-3 h-3" />}
+                            </button>
+                          )}
+                        </td>
+                      )}
                       {/* Row expand button */}
                       <td className="px-3 py-2 bg-inherit">
                         <button
@@ -627,6 +1011,44 @@ export default function ProjectDefectsPage() {
           </div>
         )}
       </div>
+
+      {/* Close defect confirmation modal */}
+      {closeConfirmContext && (() => {
+        const linkedCount = linkedTestCounts[closeConfirmContext.row.rowId] ?? 0;
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+            <div className="bg-white rounded-xl p-6 shadow-xl w-full max-w-sm mx-4">
+              <div className="flex items-start gap-3 mb-4">
+                <div className="bg-amber-100 rounded-full p-2 shrink-0">
+                  <AlertCircle className="w-5 h-5 text-amber-600" />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-gray-800">Close Defect?</h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Closing <strong>{closeConfirmContext.row.defectId}</strong> will automatically
+                    move <strong>{linkedCount} linked test case{linkedCount !== 1 ? 's' : ''}</strong> from
+                    Failed / Blocked to <strong>In Progress</strong>. Do you want to continue?
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={handleCloseConfirmNo}
+                  className="flex-1 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50"
+                >
+                  No, Keep Open
+                </button>
+                <button
+                  onClick={handleCloseConfirmYes}
+                  className="flex-1 py-2 text-sm font-medium bg-rose-600 hover:bg-rose-700 text-white rounded-lg"
+                >
+                  Yes, Close Defect
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Delete confirmation modal */}
       {deleteConfirmRow && (
@@ -707,3 +1129,4 @@ export default function ProjectDefectsPage() {
     </div>
   );
 }
+

@@ -26,11 +26,17 @@ export const saveDefectSheet = async (
   idColumnName: string,
   summaryColumnName: string,
   statusColumnName?: string,
+  detectedDateColumnName?: string,
+  resolvedDateColumnName?: string,
+  severityColumnName?: string,
 ): Promise<DefectSheetSummary> => {
   const form = new FormData();
   form.append('file', file);
   const params: Record<string, string | number> = { projectId, requesterId, idColumnName, summaryColumnName };
   if (statusColumnName) params.statusColumnName = statusColumnName;
+  if (detectedDateColumnName) params.detectedDateColumnName = detectedDateColumnName;
+  if (resolvedDateColumnName) params.resolvedDateColumnName = resolvedDateColumnName;
+  if (severityColumnName) params.severityColumnName = severityColumnName;
   const { data } = await api.post<DefectSheetSummary>('/api/v1/defects/sheets', form, { params });
   return data;
 };

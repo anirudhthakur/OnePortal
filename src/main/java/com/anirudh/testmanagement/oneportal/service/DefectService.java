@@ -35,6 +35,7 @@ public class DefectService {
     private final ProjectRepository projectRepository;
     private final ProjectMemberRepository projectMemberRepository;
     private final UserRepository userRepository;
+    private final TestDesignRowRepository testDesignRowRepository;
     private final ObjectMapper objectMapper;
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
@@ -68,7 +69,8 @@ public class DefectService {
     @Transactional
     public DefectDTO.DefectSheetSummary saveSheet(
             MultipartFile file, Long projectId, Long requesterId,
-            String idColumnName, String summaryColumnName, String statusColumnName) {
+            String idColumnName, String summaryColumnName, String statusColumnName,
+            String detectedDateColumnName, String resolvedDateColumnName, String severityColumnName) {
 
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new ResourceNotFoundException("Project", projectId));
@@ -77,8 +79,16 @@ public class DefectService {
 
         User uploader = userRepository.findById(requesterId).orElse(null);
 
-        // Replace existing sheet if present
+        // Snapshot existing links (defect_id string → set of test-row IDs) so they can be
+        // re-established after the sheet is replaced with new surrogate-keyed rows.
+        Map<String, Set<Long>> savedLinksByDefectId = new HashMap<>();
         sheetRepository.findByProjectId(projectId).ifPresent(existing -> {
+            List<Object[]> rows = rowRepository.findExistingLinksForSheet(existing.getId());
+            for (Object[] pair : rows) {
+                String defId = (String) pair[0];
+                Long testRowId = ((Number) pair[1]).longValue();
+                savedLinksByDefectId.computeIfAbsent(defId, k -> new HashSet<>()).add(testRowId);
+            }
             rowRepository.deleteLinkedDefectsByDefectSheetId(existing.getId());
             rowRepository.deleteBySheetId(existing.getId());
             sheetRepository.delete(existing);
@@ -112,8 +122,19 @@ public class DefectService {
                 throw new IllegalArgumentException(
                         "Status column '" + statusColumnName + "' not found in file headers");
             }
+            if (detectedDateColumnName != null && !detectedDateColumnName.isBlank() && !columns.contains(detectedDateColumnName)) {
+                throw new IllegalArgumentException(
+                        "Detected Date column '" + detectedDateColumnName + "' not found in file headers");
+            }
+            if (resolvedDateColumnName != null && !resolvedDateColumnName.isBlank() && !columns.contains(resolvedDateColumnName)) {
+                throw new IllegalArgumentException(
+                        "Resolved Date column '" + resolvedDateColumnName + "' not found in file headers");
+            }
 
             String resolvedStatusCol = (statusColumnName != null && !statusColumnName.isBlank()) ? statusColumnName : null;
+            String resolvedDetectedDateCol = (detectedDateColumnName != null && !detectedDateColumnName.isBlank()) ? detectedDateColumnName : null;
+            String resolvedResolvedDateCol = (resolvedDateColumnName != null && !resolvedDateColumnName.isBlank()) ? resolvedDateColumnName : null;
+            String resolvedSeverityCol = (severityColumnName != null && !severityColumnName.isBlank()) ? severityColumnName : null;
 
             DefectSheet defectSheet = DefectSheet.builder()
                     .fileName(file.getOriginalFilename())
@@ -123,6 +144,9 @@ public class DefectService {
                     .idColumnName(idColumnName)
                     .summaryColumnName(summaryColumnName)
                     .statusColumnName(resolvedStatusCol)
+                    .detectedDateColumnName(resolvedDetectedDateCol)
+                    .resolvedDateColumnName(resolvedResolvedDateCol)
+                    .severityColumnName(resolvedSeverityCol)
                     .build();
             defectSheet = sheetRepository.save(defectSheet);
 
@@ -151,7 +175,33 @@ public class DefectService {
                         .summary(summary)
                         .rowData(objectMapper.writeValueAsString(rowMap))
                         .build();
-                rowRepository.save(defectRow);
+                defectRow = rowRepository.save(defectRow);
+
+                // Restore any links that existed for this defect_id in the previous sheet
+                if (!savedLinksByDefectId.isEmpty()) {
+                    Set<Long> testRowIds = savedLinksByDefectId.get(defectId);
+                    if (testRowIds != null) {
+                        for (Long testRowId : testRowIds) {
+                            rowRepository.insertLink(testRowId, defectRow.getId());
+                        }
+                    }
+                }
+
+                // Auto-transition linked test cases if this defect is now closed
+                if (resolvedStatusCol != null) {
+                    String statusValue = rowMap.getOrDefault(resolvedStatusCol, "");
+                    if ("closed".equalsIgnoreCase(statusValue)) {
+                        List<TestDesignRow> affected =
+                                testDesignRowRepository.findFailedOrBlockedByLinkedDefectId(defectRow.getId());
+                        affected.forEach(tc -> tc.setRowStatus(TestDesignRow.RowStatus.IN_PROGRESS));
+                        testDesignRowRepository.saveAll(affected);
+                        if (!affected.isEmpty()) {
+                            log.info("Sheet re-upload: defect {} is closed — transitioned {} linked test row(s) to IN_PROGRESS",
+                                    defectId, affected.size());
+                        }
+                    }
+                }
+
                 importedRows++;
             }
 
@@ -195,6 +245,7 @@ public class DefectService {
                         .rowIndex(row.getRowIndex())
                         .defectId(row.getDefectId())
                         .summary(row.getSummary())
+                        .comments(row.getComments())
                         .data(map)
                         .updatedAt(row.getUpdatedAt())
                         .updatedByUsername(row.getUpdatedBy() != null ? row.getUpdatedBy().getUsername() : null)
@@ -261,10 +312,27 @@ public class DefectService {
         if (request.getSummary() != null) {
             row.setSummary(request.getSummary());
         }
+        if (request.getComments() != null) {
+            row.setComments(request.getComments());
+        }
         row.setUpdatedAt(LocalDateTime.now());
         row.setUpdatedBy(requester);
 
         row = rowRepository.save(row);
+
+        // Auto-transition linked test cases when defect is closed
+        String statusCol = sheet.getStatusColumnName();
+        if (statusCol != null && request.getRowData() != null) {
+            String newStatus = request.getRowData().get(statusCol);
+            if ("closed".equalsIgnoreCase(newStatus)) {
+                List<TestDesignRow> affected =
+                        testDesignRowRepository.findFailedOrBlockedByLinkedDefectId(row.getId());
+                affected.forEach(tc -> tc.setRowStatus(TestDesignRow.RowStatus.IN_PROGRESS));
+                testDesignRowRepository.saveAll(affected);
+                log.info("Defect {} closed — transitioned {} linked test row(s) to IN_PROGRESS",
+                        row.getDefectId(), affected.size());
+            }
+        }
 
         try {
             Map<String, String> map = objectMapper.readValue(
@@ -274,6 +342,7 @@ public class DefectService {
                     .rowIndex(row.getRowIndex())
                     .defectId(row.getDefectId())
                     .summary(row.getSummary())
+                    .comments(row.getComments())
                     .data(map)
                     .updatedAt(row.getUpdatedAt())
                     .updatedByUsername(row.getUpdatedBy() != null ? row.getUpdatedBy().getUsername() : null)
@@ -325,6 +394,7 @@ public class DefectService {
                     .rowIndex(newRow.getRowIndex())
                     .defectId(newRow.getDefectId())
                     .summary(newRow.getSummary())
+                    .comments(newRow.getComments())
                     .data(blankMap)
                     .updatedAt(newRow.getUpdatedAt())
                     .updatedByUsername(newRow.getUpdatedBy() != null ? newRow.getUpdatedBy().getUsername() : null)
@@ -390,6 +460,9 @@ public class DefectService {
                 .idColumnName(sheet.getIdColumnName())
                 .summaryColumnName(sheet.getSummaryColumnName())
                 .statusColumnName(sheet.getStatusColumnName())
+                .detectedDateColumnName(sheet.getDetectedDateColumnName())
+                .resolvedDateColumnName(sheet.getResolvedDateColumnName())
+                .severityColumnName(sheet.getSeverityColumnName())
                 .totalRows(totalRows)
                 .createdAt(sheet.getCreatedAt())
                 .uploadedByUsername(sheet.getUploadedBy() != null ? sheet.getUploadedBy().getUsername() : null)
