@@ -9,9 +9,6 @@ const PAGE_SIZE = 25;
 
 type SortDir = 'asc' | 'desc' | null;
 
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-}
 
 export default function SheetDetailPage() {
   const { sheetId } = useParams<{ sheetId: string }>();

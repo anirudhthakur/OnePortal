@@ -21,7 +21,7 @@ export default function Navbar() {
 
   const { data: users = [] } = useQuery<UserType[]>({
     queryKey: ['users'],
-    queryFn: getAllUsers,
+    queryFn: () => getAllUsers(),
     enabled: showModal,
   });
 

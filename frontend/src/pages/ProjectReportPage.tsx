@@ -353,7 +353,7 @@ export default function ProjectReportPage() {
 
   const {
     executionSummary: exec, executionByStatus, dailyTrend,
-    defectByStatus, defectBySeverity, channelExecution, detectedVsResolved, defects,
+    defectByStatus, defectBySeverity, channelExecution, detectedVsResolved, defects: _defects,
   } = data;
 
   // How many charts are enabled in each paired row

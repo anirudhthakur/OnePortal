@@ -146,7 +146,7 @@ export default function ProjectDetailPage() {
   const [selectedTCStatusCol, setSelectedTCStatusCol] = useState('');
   const [selectedAssignedToCol, setSelectedAssignedToCol] = useState('');
   const [tcMappingError, setTcMappingError] = useState<string | null>(null);
-  const [isParsing, setIsParsing] = useState(false);
+  const [, setIsParsing] = useState(false);
   const [columnMappingError, setColumnMappingError] = useState<string | null>(null);
   const [isParsingHeaders, setIsParsingHeaders] = useState(false);
 
@@ -227,7 +227,7 @@ export default function ProjectDetailPage() {
       const assignee = row.assignedToUsername ?? 'Unassigned';
       const status = row.rowStatus ?? 'NOT_STARTED';
       if (!map[assignee]) {
-        map[assignee] = { NOT_STARTED: 0, IN_PROGRESS: 0, PASSED: 0, FAILED: 0, BLOCKED: 0 };
+        map[assignee] = { NOT_STARTED: 0, IN_PROGRESS: 0, PASSED: 0, FAILED: 0, BLOCKED: 0, NOT_APPLICABLE: 0, NOT_DELIVERED: 0 };
       }
       map[assignee][status] = (map[assignee][status] ?? 0) + 1;
     });

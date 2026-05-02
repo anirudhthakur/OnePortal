@@ -60,7 +60,7 @@ export default function UsersPage() {
 
   const { data: pendingUsers = [] } = useQuery({
     queryKey: ['pendingUsers'],
-    queryFn: getPendingUsers,
+    queryFn: () => getPendingUsers(),
     enabled: isAdmin,
   });
 
