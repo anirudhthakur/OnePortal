@@ -93,6 +93,8 @@ const HEADER_H = 38;
 /** Virtual column that shows the blocked-test-case count per defect */
 const IMPACTED_COL = 'Impacted Scenarios';
 
+const formatDateOnly = (dateStr: string) => dateStr.split('T')[0].split(' ')[0];
+
 // ─── component ───────────────────────────────────────────────────────────────
 
 export default function ProjectReportPage() {
@@ -371,7 +373,7 @@ export default function ProjectReportPage() {
           </button>
           <div>
             <h1 className="text-base font-semibold text-gray-800">{data.projectName} — Daily Report</h1>
-            <p className="text-xs text-gray-400">Generated: {data.generatedAt}</p>
+            <p className="text-xs text-gray-400">Generated: {formatDateOnly(data.generatedAt)}</p>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -403,8 +405,17 @@ export default function ProjectReportPage() {
 
         {/* Paper header */}
         <div className="px-10 pt-8 pb-5 border-b border-gray-200">
-          <h1 className="text-xl font-bold text-gray-900">{data.projectName} — Daily Status Report</h1>
-          <p className="text-xs text-gray-500 mt-1">Generated: {data.generatedAt}</p>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h1 className="text-xl font-bold text-gray-900">{data.projectName} — Daily Status Report</h1>
+              <p className="text-xs text-gray-500 mt-1">Generated: {formatDateOnly(data.generatedAt)}</p>
+            </div>
+            <div className="flex items-center gap-5 shrink-0">
+              <img src="/amdocs-logo.png" alt="Amdocs" className="h-12 w-auto object-contain" />
+              <div className="w-px h-10 bg-gray-200" />
+              <img src="/vodafone-logo.png" alt="Vodafone" className="h-11 w-auto object-contain" />
+            </div>
+          </div>
         </div>
 
         {/* Paper body */}
